@@ -349,7 +349,7 @@ git commit -m "feat: scaffold FastAPI backend and docker compose stack"
 
 **Interfaces:**
 - Consumes: `app.config.get_settings()` (Task 1).
-- Produces: `app.db.Base` (declarative base), `app.db.get_engine(url: str)`, `app.db.SessionLocal` (sessionmaker bound to `get_settings().database_url`), `app.db.get_db()` (FastAPI dependency yielding a `Session`). Produces ORM models: `Course`, `Document`, `Chunk`, `ChatSession`, `ChatMessage`, `MessageCitation`, all in `app.models`, with columns exactly as listed below — later tasks import these names directly.
+- Produces: `app.db.Base` (declarative base), `app.db.get_engine(url: str)`, `app.db.SessionLocal` (sessionmaker bound to `get_settings().database_url`), `app.db.get_db()` (FastAPI dependency yielding a `Session`), `app.db.get_session_factory()` (FastAPI dependency returning a session-factory callable, defaults to `SessionLocal`, overridable in tests so background tasks can be pointed at a different database/connection than production). Produces ORM models: `Course`, `Document`, `Chunk`, `ChatSession`, `ChatMessage`, `MessageCitation`, all in `app.models`, with columns exactly as listed below — later tasks import these names directly.
 
 - [ ] **Step 1: Write `backend/app/db.py`**
 
@@ -377,6 +377,14 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_session_factory():
+    """FastAPI dependency provider for a session factory, so background tasks
+    that need their own session (rather than the request-scoped `get_db`
+    session) can be pointed at a different database in tests via
+    `app.dependency_overrides`."""
+    return SessionLocal
 ```
 
 - [ ] **Step 2: Write `backend/app/models.py`**
@@ -707,7 +715,7 @@ def downgrade() -> None:
 import os
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base, get_engine
@@ -739,14 +747,61 @@ def test_engine():
 
 @pytest.fixture()
 def db_session(test_engine):
+    """Wraps each test in an outer transaction that is always rolled back,
+    using the standard SQLAlchemy "join a session into an external
+    transaction" pattern (SAVEPOINT + restart-on-end listener). Without
+    this, any `session.commit()` call inside application code (nearly
+    every route and service commits) would commit straight through the
+    connection instead of just releasing a SAVEPOINT, breaking the outer
+    rollback and leaking committed rows into later tests.
+
+    Use this fixture for ordinary CRUD tests. Do NOT use it for tests that
+    exercise code taking a `db_session_factory`-style callable (e.g.
+    `run_ingestion`, or any route that hands a session factory to a
+    background task) — that code opens its OWN connection when the factory
+    is called, and a second, independently-committing session sharing this
+    fixture's connection would commit straight through this fixture's
+    transaction too, breaking its rollback. Use `real_db_session` instead
+    for those cases (see below).
+    """
     connection = test_engine.connect()
     transaction = connection.begin()
     Session = sessionmaker(bind=connection)
     session = Session()
+    session.begin_nested()
+
+    @event.listens_for(session, "after_transaction_end")
+    def _restart_savepoint(sess, trans):
+        if trans.nested and not trans._parent.nested:
+            sess.begin_nested()
+
     yield session
     session.close()
     transaction.rollback()
     connection.close()
+
+
+@pytest.fixture()
+def real_db_session(test_engine):
+    """A plain, actually-committing session bound directly to the shared
+    engine (each operation may use a fresh connection from the pool,
+    released back to the pool on close — exactly like production).
+
+    Use this ONLY for tests that exercise a `db_session_factory`-style
+    callable (e.g. `run_ingestion`, or a route that hands a session factory
+    to a `BackgroundTasks` task): that code opens its own separate
+    connection/session when the factory is called, so it can only see data
+    that was genuinely committed — not data held inside `db_session`'s
+    rolled-back transaction on a different connection.
+
+    Tests using this fixture are responsible for cleaning up what they
+    create (typically: delete the `Course` you made — it cascades to its
+    documents/chunks), since nothing here rolls back automatically.
+    """
+    Session = sessionmaker(bind=test_engine)
+    session = Session()
+    yield session
+    session.close()
 
 
 @pytest.fixture()
@@ -1422,76 +1477,88 @@ from app.ingestion.pipeline import run_ingestion
 from app.models import Chunk, Course, Document
 
 
-def test_run_ingestion_pdf_end_to_end(db_session, test_engine, fixtures_dir, tmp_path):
-    course = Course(name="Biology")
-    db_session.add(course)
-    db_session.flush()
+def test_run_ingestion_pdf_end_to_end(real_db_session, test_engine, fixtures_dir, tmp_path):
+    course = Course(name="Pipeline Test Course PDF")
+    real_db_session.add(course)
+    real_db_session.commit()
 
-    doc_dir = tmp_path / "doc1"
-    doc_dir.mkdir()
-    original = doc_dir / "original.pdf"
-    shutil.copy(Path(fixtures_dir) / "sample.pdf", original)
+    try:
+        doc_dir = tmp_path / "doc1"
+        doc_dir.mkdir()
+        original = doc_dir / "original.pdf"
+        shutil.copy(Path(fixtures_dir) / "sample.pdf", original)
 
-    document = Document(
-        course_id=course.id,
-        original_filename="sample.pdf",
-        original_format="pdf",
-        original_path=str(original),
-        file_sha256="b" * 64,
-    )
-    db_session.add(document)
-    db_session.commit()
-    document_id = document.id
+        document = Document(
+            course_id=course.id,
+            original_filename="sample.pdf",
+            original_format="pdf",
+            original_path=str(original),
+            file_sha256="b" * 64,
+        )
+        real_db_session.add(document)
+        real_db_session.commit()
+        document_id = document.id
 
-    session_factory = sessionmaker(bind=test_engine)
-    run_ingestion(document_id, session_factory)
+        # A fresh connection from the pool each call — exactly like
+        # production. This only works because `real_db_session`'s writes
+        # above were genuinely committed, so this separate connection can
+        # see them.
+        session_factory = sessionmaker(bind=test_engine)
+        run_ingestion(document_id, session_factory)
 
-    db_session.expire_all()
-    refreshed = db_session.get(Document, document_id)
-    assert refreshed.ingest_status == "ready"
-    assert refreshed.page_count == 2
+        real_db_session.expire_all()
+        refreshed = real_db_session.get(Document, document_id)
+        assert refreshed.ingest_status == "ready"
+        assert refreshed.page_count == 2
 
-    chunks = db_session.query(Chunk).filter_by(document_id=document_id).order_by(Chunk.chunk_index).all()
-    assert len(chunks) >= 2
-    assert all(c.course_id == course.id for c in chunks)
-    assert any("mitochondria" in c.text.lower() for c in chunks)
+        chunks = real_db_session.query(Chunk).filter_by(document_id=document_id).order_by(Chunk.chunk_index).all()
+        assert len(chunks) >= 2
+        assert all(c.course_id == course.id for c in chunks)
+        assert any("mitochondria" in c.text.lower() for c in chunks)
+    finally:
+        real_db_session.delete(course)
+        real_db_session.commit()
 
 
-def test_run_ingestion_docx_converts_and_embeds(db_session, test_engine, fixtures_dir, tmp_path):
-    course = Course(name="Biology 2")
-    db_session.add(course)
-    db_session.flush()
+def test_run_ingestion_docx_converts_and_embeds(real_db_session, test_engine, fixtures_dir, tmp_path):
+    course = Course(name="Pipeline Test Course DOCX")
+    real_db_session.add(course)
+    real_db_session.commit()
 
-    doc_dir = tmp_path / "doc2"
-    doc_dir.mkdir()
-    original = doc_dir / "original.docx"
-    shutil.copy(Path(fixtures_dir) / "sample.docx", original)
+    try:
+        doc_dir = tmp_path / "doc2"
+        doc_dir.mkdir()
+        original = doc_dir / "original.docx"
+        shutil.copy(Path(fixtures_dir) / "sample.docx", original)
 
-    document = Document(
-        course_id=course.id,
-        original_filename="sample.docx",
-        original_format="docx",
-        original_path=str(original),
-        file_sha256="c" * 64,
-    )
-    db_session.add(document)
-    db_session.commit()
-    document_id = document.id
+        document = Document(
+            course_id=course.id,
+            original_filename="sample.docx",
+            original_format="docx",
+            original_path=str(original),
+            file_sha256="c" * 64,
+        )
+        real_db_session.add(document)
+        real_db_session.commit()
+        document_id = document.id
 
-    session_factory = sessionmaker(bind=test_engine)
-    run_ingestion(document_id, session_factory)
+        session_factory = sessionmaker(bind=test_engine)
+        run_ingestion(document_id, session_factory)
 
-    db_session.expire_all()
-    refreshed = db_session.get(Document, document_id)
-    assert refreshed.ingest_status == "ready"
-    assert refreshed.pdf_path is not None
-    assert refreshed.pdf_path.endswith(".pdf")
+        real_db_session.expire_all()
+        refreshed = real_db_session.get(Document, document_id)
+        assert refreshed.ingest_status == "ready"
+        assert refreshed.pdf_path is not None
+        assert refreshed.pdf_path.endswith(".pdf")
+    finally:
+        real_db_session.delete(course)
+        real_db_session.commit()
 ```
 
 - [ ] **Step 3: Run test to verify it fails, then passes**
 
 Run: `docker compose run --rm backend pytest tests/ingestion/test_pipeline.py -v`
-Expected: FAIL with `ModuleNotFoundError` before Step 1; `2 passed` after (note: the `db_session` fixture uses a rolled-back transaction, but `run_ingestion` opens its *own* session via `session_factory` — that session commits against the same underlying test database connection pool, so the two tests' writes are visible to each other's session but each test still gets a fresh `Course`, avoiding cross-test interference via unique names/sha256).
+Expected: FAIL with `ModuleNotFoundError` before Step 1; `2 passed` after. Both tests use `real_db_session` (genuinely committing) for setup so that `run_ingestion`'s independently-connected session (built from `session_factory = sessionmaker(bind=test_engine)`, a fresh connection from the pool) can actually see the seeded `Course`/`Document` rows — this mirrors how the real app uses `run_ingestion` in production. Each test deletes its `Course` in a `finally` block (cascades to `Document`/`Chunk`) since nothing here rolls back automatically.
 
 - [ ] **Step 4: Commit**
 
@@ -1700,7 +1767,7 @@ git commit -m "feat: add course CRUD API"
 - Test: `backend/tests/routers/test_documents.py`
 
 **Interfaces:**
-- Consumes: `models.Document`, `ingestion.pipeline.run_ingestion`, `db.SessionLocal` (used as the `db_session_factory` passed to background ingestion).
+- Consumes: `models.Document`, `ingestion.pipeline.run_ingestion`, `db.get_session_factory` (Task 2 — injected via `Depends` and passed as the `db_session_factory` argument to background ingestion, so tests can override it to target the test database instead of production).
 - Produces: `schemas.DocumentOut` (`id, course_id, original_filename, original_format, ingest_status, ingest_error, page_count, created_at`). Router mounted with `POST /api/courses/{course_id}/documents`, `GET /api/courses/{course_id}/documents`, `GET /api/documents/{id}`, `POST /api/documents/{id}/retry`, `DELETE /api/documents/{id}`, `GET /api/documents/{id}/pdf`.
 
 - [ ] **Step 1: Add to `backend/app/schemas.py`**
@@ -1732,7 +1799,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import SessionLocal, get_db
+from app.db import get_db, get_session_factory
 from app.ingestion.pipeline import run_ingestion
 from app.models import Course, Document
 from app.schemas import DocumentOut
@@ -1764,6 +1831,7 @@ def upload_documents(
     files: list[UploadFile],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    session_factory=Depends(get_session_factory),
 ):
     course = db.get(Course, course_id)
     if course is None:
@@ -1794,7 +1862,7 @@ def upload_documents(
     db.commit()
     for document in created:
         db.refresh(document)
-        background_tasks.add_task(run_ingestion, document.id, SessionLocal)
+        background_tasks.add_task(run_ingestion, document.id, session_factory)
 
     return created
 
@@ -1813,7 +1881,12 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/api/documents/{document_id}/retry", response_model=DocumentOut)
-def retry_document(document_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def retry_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    session_factory=Depends(get_session_factory),
+):
     document = db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1821,7 +1894,7 @@ def retry_document(document_id: int, background_tasks: BackgroundTasks, db: Sess
     document.ingest_error = None
     db.commit()
     db.refresh(document)
-    background_tasks.add_task(run_ingestion, document.id, SessionLocal)
+    background_tasks.add_task(run_ingestion, document.id, session_factory)
     return document
 
 
@@ -1876,28 +1949,37 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
 
-from app.db import get_db
+from app.db import get_db, get_session_factory
 from app.main import app
 from app.models import Course
 
 
 @pytest.fixture()
-def client(db_session, tmp_path, monkeypatch):
+def client(real_db_session, test_engine, tmp_path, monkeypatch):
+    """Uses `real_db_session` (not the rolled-back `db_session`) and
+    overrides `get_session_factory` to bind background ingestion to the
+    same test engine — both must be "real, committing" together, since the
+    background task opens its own connection and can only see genuinely
+    committed rows. See `real_db_session`'s docstring in conftest.py."""
     from app import config
 
     monkeypatch.setattr(config.get_settings(), "data_dir", str(tmp_path))
-    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_db] = lambda: real_db_session
+    app.dependency_overrides[get_session_factory] = lambda: sessionmaker(bind=test_engine)
     yield TestClient(app)
     app.dependency_overrides.clear()
 
 
 @pytest.fixture()
-def course(db_session):
+def course(real_db_session):
     course = Course(name="Upload Test Course")
-    db_session.add(course)
-    db_session.commit()
-    return course
+    real_db_session.add(course)
+    real_db_session.commit()
+    yield course
+    real_db_session.delete(course)
+    real_db_session.commit()
 
 
 def test_upload_pdf_starts_ingestion_and_becomes_ready(client, course, fixtures_dir):
@@ -1950,7 +2032,7 @@ def test_delete_document_removes_it(client, course, fixtures_dir):
 - [ ] **Step 5: Run test to verify it fails, then passes**
 
 Run: `docker compose run --rm backend pytest tests/routers/test_documents.py -v`
-Expected: FAIL before Steps 1-3 with `ModuleNotFoundError`; `3 passed` after (the first upload test is slow — real ingestion including model inference runs inline).
+Expected: FAIL before Steps 1-3 with `ModuleNotFoundError`; `3 passed` after (the first upload test is slow — real ingestion including model inference runs inline). The `course` fixture deletes its row (cascading to any documents/chunks) after each test since `real_db_session` does not roll back automatically.
 
 - [ ] **Step 6: Commit**
 
