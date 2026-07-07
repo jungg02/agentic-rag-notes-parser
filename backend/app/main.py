@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.routers import courses
+from app.routers import courses, documents
 
 app = FastAPI(title="Study Notes Parser")
 app.include_router(courses.router)
+app.include_router(documents.router)
 
 
 @app.get("/health")
