@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 
 from app.config import get_settings
+from app.routers import courses
 
 app = FastAPI(title="Study Notes Parser")
+app.include_router(courses.router)
 
 
 @app.get("/health")
