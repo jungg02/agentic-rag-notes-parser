@@ -6,6 +6,7 @@ import { ChatPane } from "./components/chat/ChatPane";
 import { CourseSelector } from "./components/courses/CourseSelector";
 import { DocumentList } from "./components/documents/DocumentList";
 import { UploadDropzone } from "./components/documents/UploadDropzone";
+import { SourcePanel } from "./components/source-panel/SourcePanel";
 
 const queryClient = new QueryClient();
 
@@ -25,7 +26,7 @@ export default function App() {
             <ChatPane courseId={selectedCourseId} onOpenSource={setOpenChunkId} />
           </>
         )}
-        {openChunkId !== null && <div data-testid="source-panel-placeholder">chunk {openChunkId}</div>}
+        <SourcePanel chunkId={openChunkId} onClose={() => setOpenChunkId(null)} />
       </div>
     </QueryClientProvider>
   );
