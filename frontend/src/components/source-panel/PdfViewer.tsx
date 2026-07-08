@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 
 import * as pdfjsLib from "pdfjs-dist";
 
+import "./PdfViewer.css";
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
   import.meta.url
@@ -43,5 +45,9 @@ export function PdfViewer({ pdfUrl, pageNumber }: PdfViewerProps) {
     };
   }, [pdfUrl, pageNumber]);
 
-  return <canvas ref={canvasRef} data-testid="pdf-canvas" />;
+  return (
+    <div className="pdf-viewer">
+      <canvas ref={canvasRef} data-testid="pdf-canvas" />
+    </div>
+  );
 }

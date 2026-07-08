@@ -1,4 +1,5 @@
 import type { Citation } from "../../api/chat";
+import "./CitationChip.css";
 
 interface CitationChipProps {
   citation: Citation;
