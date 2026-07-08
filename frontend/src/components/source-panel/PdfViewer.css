@@ -1,0 +1,12 @@
+.pdf-viewer {
+  display: flex;
+  justify-content: center;
+}
+
+.pdf-viewer canvas {
+  max-width: 100%;
+  height: auto;
+  background: #ffffff;
+  box-shadow: var(--shadow-card);
+  border-radius: 2px;
+}

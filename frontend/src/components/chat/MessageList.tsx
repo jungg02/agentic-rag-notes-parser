@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import type { ChatMessage } from "../../api/chat";
 import { CitationChip } from "./CitationChip";
+import "./MessageList.css";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -26,6 +27,14 @@ function renderContentWithCitations(message: ChatMessage, onOpenSource: (chunkId
 }
 
 export function MessageList({ messages, onOpenSource }: MessageListProps) {
+  if (messages.length === 0) {
+    return (
+      <div className="message-list">
+        <p className="message-list-empty">Ask a question about your course materials to get started.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="message-list">
       {messages.map((message) => (

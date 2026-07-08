@@ -1,6 +1,7 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { useUploadDocuments } from "../../api/documents";
+import "./UploadDropzone.css";
 
 interface UploadDropzoneProps {
   courseId: number;
@@ -9,6 +10,7 @@ interface UploadDropzoneProps {
 export function UploadDropzone({ courseId }: UploadDropzoneProps) {
   const upload = useUploadDocuments(courseId);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleFiles = (files: FileList | null) => {
     if (files && files.length > 0) {
@@ -18,10 +20,15 @@ export function UploadDropzone({ courseId }: UploadDropzoneProps) {
 
   return (
     <div
-      className="upload-dropzone"
-      onDragOver={(e) => e.preventDefault()}
+      className={`upload-dropzone${isDragging ? " is-dragging" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragLeave={() => setIsDragging(false)}
       onDrop={(e) => {
         e.preventDefault();
+        setIsDragging(false);
         handleFiles(e.dataTransfer.files);
       }}
       onClick={() => inputRef.current?.click()}
@@ -35,7 +42,11 @@ export function UploadDropzone({ courseId }: UploadDropzoneProps) {
         style={{ display: "none" }}
         onChange={(e) => handleFiles(e.target.files)}
       />
+      <span className="upload-dropzone-icon" aria-hidden="true">
+        ⇪
+      </span>
       <p>Drop PDF, DOCX, or PPTX files here, or click to select.</p>
+      <p className="upload-dropzone-hint">PDF, DOCX, PPTX</p>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { ChatMessage } from "../../api/chat";
 import { sendMessageStream, useChatMessages, useChatSessions, useCreateChatSession } from "../../api/chat";
 import { ChatInput } from "./ChatInput";
+import "./ChatPane.css";
 import { MessageList } from "./MessageList";
 
 interface ChatPaneProps {
@@ -74,7 +75,12 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
   if (sessionId === null) {
     return (
       <div className="chat-pane">
-        <button onClick={handleStartSession}>Start a new chat</button>
+        <div className="chat-pane-start">
+          <p>Ask questions about this course's materials and get answers cited back to the source page.</p>
+          <button className="btn-primary" onClick={handleStartSession}>
+            Start a new chat
+          </button>
+        </div>
       </div>
     );
   }
