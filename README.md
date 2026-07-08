@@ -183,6 +183,41 @@ npm run dev
 Then open the app at http://localhost:5173 (the Vite dev server proxies
 `/api` to `http://localhost:8000`).
 
+### Subsequent runs
+
+After the one-time setup above, the install, database-creation, and
+`.env` steps are done — day-to-day you just start the services. Your
+courses, uploaded files, and chat history persist between runs (in the
+Postgres database and `DATA_DIR`), so you pick up where you left off.
+
+**With Docker (Option A):**
+
+```bash
+docker compose up -d      # start db + backend + frontend
+docker compose down       # stop them again
+```
+
+**Natively (Option B)** — two terminals:
+
+```bash
+# Terminal 1 — backend
+cd backend
+.venv/Scripts/activate   # .venv/bin/activate on macOS/Linux
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Terminal 2 — frontend
+cd frontend
+npm run dev
+```
+
+Then open http://localhost:5173 (API docs at http://localhost:8000/docs).
+Stop either server with `Ctrl+C`.
+
+Only re-run `alembic upgrade head` (natively) or
+`docker compose exec backend alembic upgrade head` (Docker) after pulling
+changes that add new database migrations — not on every start. Re-run
+`pip install -e ".[dev]"` or `npm install` only when dependencies change.
+
 ### Configuration
 
 All backend config lives in `backend/.env` (see `.env.example`):
