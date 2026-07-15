@@ -1,8 +1,11 @@
+import logging
 import shutil
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy.orm import sessionmaker
 
+from app.ingestion.convert import ConversionError
 from app.ingestion.pipeline import run_ingestion
 from app.models import Chunk, Course, Document
 
@@ -48,6 +51,46 @@ def test_run_ingestion_pdf_end_to_end(real_db_session, test_engine, fixtures_dir
     finally:
         real_db_session.delete(course)
         real_db_session.commit()
+
+
+def _mock_session_returning(doc):
+    session = MagicMock()
+    session.get.return_value = doc
+    return session
+
+
+def test_run_ingestion_logs_unexpected_error_with_traceback(caplog):
+    """An unhandled failure must be logged with its traceback, not silently
+    swallowed into the database, so operators can see WHY ingestion failed."""
+    doc = MagicMock()
+    doc.original_format = "pdf"
+    doc.original_path = "/data/whatever.pdf"
+    session = _mock_session_returning(doc)
+
+    with patch("app.ingestion.pipeline.extract_pages", side_effect=RuntimeError("boom")):
+        with caplog.at_level(logging.ERROR):
+            run_ingestion(1, lambda: session)
+
+    assert doc.ingest_status == "failed"
+    named = [r for r in caplog.records if "ingesting document" in r.getMessage()]
+    assert named, "expected an error-level log naming the failed document"
+    assert any(r.exc_info is not None for r in named), "traceback must be captured"
+
+
+def test_run_ingestion_logs_handled_error(caplog):
+    """A handled (expected) failure is logged at warning level with its message."""
+    doc = MagicMock()
+    doc.original_format = "pptx"
+    doc.original_path = "/data/deck.pptx"
+    session = _mock_session_returning(doc)
+
+    with patch("app.ingestion.pipeline.convert_to_pdf", side_effect=ConversionError("boom")):
+        with caplog.at_level(logging.WARNING):
+            run_ingestion(1, lambda: session)
+
+    assert doc.ingest_status == "failed"
+    assert doc.ingest_error == "boom"
+    assert any("Ingestion failed for document" in r.getMessage() for r in caplog.records)
 
 
 def test_run_ingestion_docx_converts_and_embeds(real_db_session, test_engine, fixtures_dir, tmp_path):
