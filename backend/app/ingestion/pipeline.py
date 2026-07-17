@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Callable
 
@@ -8,6 +9,8 @@ from app.ingestion.convert import ConversionError, convert_to_pdf
 from app.ingestion.embedder import embed_texts
 from app.ingestion.parse import extract_pages
 from app.models import Chunk, Document
+
+logger = logging.getLogger(__name__)
 
 MIN_TEXT_CHARS_PER_PAGE = 50
 
@@ -80,9 +83,11 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
 
         except (ConversionError, IngestionError) as exc:
             db.rollback()
+            logger.warning("Ingestion failed for document %s: %s", document_id, exc)
             _set_status(db, document_id, "failed", str(exc))
         except Exception as exc:  # noqa: BLE001 - any unexpected failure must not crash the background task
             db.rollback()
+            logger.exception("Unexpected error ingesting document %s", document_id)
             _set_status(db, document_id, "failed", f"Unexpected error: {exc}")
     finally:
         db.close()

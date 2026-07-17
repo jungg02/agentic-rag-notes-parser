@@ -33,7 +33,11 @@ def extract_pages(pdf_path: Path) -> list[PageLines]:
                     spans = line.get("spans", [])
                     if not spans:
                         continue
-                    text = "".join(span["text"] for span in spans).strip()
+                    # PostgreSQL text columns cannot store NUL (0x00) bytes, which
+                    # PyMuPDF occasionally emits for certain glyphs (common in
+                    # PPTX->PDF slide decks). Strip them here at the source so they
+                    # never reach the chunks table.
+                    text = "".join(span["text"] for span in spans).replace("\x00", "").strip()
                     if not text:
                         continue
                     x0 = min(span["bbox"][0] for span in spans)
