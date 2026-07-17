@@ -53,6 +53,52 @@ def test_run_ingestion_pdf_end_to_end(real_db_session, test_engine, fixtures_dir
         real_db_session.commit()
 
 
+def test_run_ingestion_replaces_chunks_on_reingest(real_db_session, test_engine, fixtures_dir, tmp_path):
+    """Re-ingesting a document (a retry, or re-uploading an already-stored file)
+    must replace its chunks. Otherwise the fresh chunk_index values collide with
+    the existing rows on uq_chunk_document_index and the document fails."""
+    course = Course(name="Pipeline Test Course Reingest")
+    real_db_session.add(course)
+    real_db_session.commit()
+
+    try:
+        doc_dir = tmp_path / "doc3"
+        doc_dir.mkdir()
+        original = doc_dir / "original.pdf"
+        shutil.copy(Path(fixtures_dir) / "sample.pdf", original)
+
+        document = Document(
+            course_id=course.id,
+            original_filename="sample.pdf",
+            original_format="pdf",
+            original_path=str(original),
+            file_sha256="d" * 64,
+        )
+        real_db_session.add(document)
+        real_db_session.commit()
+        document_id = document.id
+
+        session_factory = sessionmaker(bind=test_engine)
+        run_ingestion(document_id, session_factory)
+
+        real_db_session.expire_all()
+        assert real_db_session.get(Document, document_id).ingest_status == "ready"
+        first_count = real_db_session.query(Chunk).filter_by(document_id=document_id).count()
+        assert first_count > 0
+
+        # Second run over the same document: must replace, not collide.
+        run_ingestion(document_id, session_factory)
+
+        real_db_session.expire_all()
+        refreshed = real_db_session.get(Document, document_id)
+        assert refreshed.ingest_status == "ready"
+        assert refreshed.ingest_error is None
+        assert real_db_session.query(Chunk).filter_by(document_id=document_id).count() == first_count
+    finally:
+        real_db_session.delete(course)
+        real_db_session.commit()
+
+
 def _mock_session_returning(doc):
     session = MagicMock()
     session.get.return_value = doc
