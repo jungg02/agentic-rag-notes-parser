@@ -1,3 +1,13 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import distinct, func, select
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.models import Chunk, Course, Document
+
+router = APIRouter(prefix="/api/courses", tags=["coverage"])
+
+
 def _document_coverage(
     *,
     document_id: int,
@@ -38,3 +48,64 @@ def _document_coverage(
         "tokens": token_sum,
         "ingest_error": ingest_error,
     }
+
+
+@router.get("/{course_id}/coverage")
+def course_coverage(course_id: int, db: Session = Depends(get_db)):
+    course = db.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    documents = db.scalars(
+        select(Document).where(Document.course_id == course_id).order_by(Document.id)
+    ).all()
+
+    doc_ids = [d.id for d in documents]
+    agg: dict[int, tuple[set[int], int, int]] = {}
+    if doc_ids:
+        rows = db.execute(
+            select(
+                Chunk.document_id,
+                func.array_agg(distinct(Chunk.page_number)),
+                func.count(Chunk.id),
+                func.coalesce(func.sum(Chunk.token_count), 0),
+            )
+            .where(Chunk.document_id.in_(doc_ids))
+            .group_by(Chunk.document_id)
+        ).all()
+        agg = {row[0]: (set(row[1]), row[2], row[3]) for row in rows}
+
+    doc_reports = []
+    for d in documents:
+        present_pages, chunk_count, token_sum = agg.get(d.id, (set(), 0, 0))
+        doc_reports.append(
+            _document_coverage(
+                document_id=d.id,
+                filename=d.original_filename,
+                ingest_status=d.ingest_status,
+                ingest_error=d.ingest_error,
+                page_count=d.page_count,
+                present_pages=present_pages,
+                chunk_count=chunk_count,
+                token_sum=token_sum,
+            )
+        )
+
+    ready = [r for r in doc_reports if r["ingest_status"] == "ready"]
+    total_pages = sum(r["page_count"] for r in ready)
+    pages_with_text = sum(r["pages_with_text"] for r in ready)
+    summary = {
+        "documents": len(doc_reports),
+        "ready": len(ready),
+        "failed": sum(1 for r in doc_reports if r["ingest_status"] == "failed"),
+        "in_progress": sum(
+            1 for r in doc_reports if r["ingest_status"] not in ("ready", "failed")
+        ),
+        "total_pages": total_pages,
+        "pages_with_text": pages_with_text,
+        "coverage_pct": round(pages_with_text / total_pages * 100, 1) if total_pages else 0.0,
+        "total_chunks": sum(r["chunks"] for r in ready),
+        "total_tokens": sum(r["tokens"] for r in ready),
+    }
+
+    return {"course_id": course_id, "summary": summary, "documents": doc_reports}
