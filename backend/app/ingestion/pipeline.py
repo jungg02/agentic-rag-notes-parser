@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Callable
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.ingestion.chunker import chunk_pages
@@ -59,6 +60,14 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
             _set_status(db, document_id, "embedding")
             embed_inputs = [f"{d.context_header}\n{d.text}" if d.context_header else d.text for d in drafts]
             vectors = embed_texts(embed_inputs)
+
+            # Ingestion is re-runnable (the retry endpoint, and re-uploading an
+            # already-stored file), so drop any chunks from a previous run before
+            # inserting this one: the fresh chunk_index values start at 0 again and
+            # would otherwise collide on uq_chunk_document_index. This runs in the
+            # same transaction as the inserts below, so a failure rolls back and
+            # leaves the existing chunks intact.
+            db.execute(delete(Chunk).where(Chunk.document_id == document_id))
 
             for index, (draft, vector) in enumerate(zip(drafts, vectors)):
                 db.add(
