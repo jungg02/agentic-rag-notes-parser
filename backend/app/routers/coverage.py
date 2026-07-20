@@ -91,12 +91,21 @@ def course_coverage(course_id: int, db: Session = Depends(get_db)):
             )
         )
 
-    ready = [r for r in doc_reports if r["ingest_status"] == "ready"]
-    total_pages = sum(r["page_count"] for r in ready)
-    pages_with_text = sum(r["pages_with_text"] for r in ready)
+    # A "ready" document always has a page_count under the real pipeline
+    # (pipeline sets page_count and status="ready" in the same commit), but a
+    # manual insert or migration could leave page_count NULL. Sum coverage
+    # totals only over ready docs that actually have page data so a stray NULL
+    # can't turn the whole endpoint into a 500. summary["ready"] stays a true
+    # count of ready-by-status documents.
+    ready_with_pages = [
+        r for r in doc_reports
+        if r["ingest_status"] == "ready" and r["page_count"] is not None
+    ]
+    total_pages = sum(r["page_count"] for r in ready_with_pages)
+    pages_with_text = sum(r["pages_with_text"] for r in ready_with_pages)
     summary = {
         "documents": len(doc_reports),
-        "ready": len(ready),
+        "ready": sum(1 for r in doc_reports if r["ingest_status"] == "ready"),
         "failed": sum(1 for r in doc_reports if r["ingest_status"] == "failed"),
         "in_progress": sum(
             1 for r in doc_reports if r["ingest_status"] not in ("ready", "failed")
@@ -104,8 +113,8 @@ def course_coverage(course_id: int, db: Session = Depends(get_db)):
         "total_pages": total_pages,
         "pages_with_text": pages_with_text,
         "coverage_pct": round(pages_with_text / total_pages * 100, 1) if total_pages else 0.0,
-        "total_chunks": sum(r["chunks"] for r in ready),
-        "total_tokens": sum(r["tokens"] for r in ready),
+        "total_chunks": sum(r["chunks"] for r in ready_with_pages),
+        "total_tokens": sum(r["tokens"] for r in ready_with_pages),
     }
 
     return {"course_id": course_id, "summary": summary, "documents": doc_reports}

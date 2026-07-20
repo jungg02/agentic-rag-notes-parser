@@ -174,3 +174,32 @@ def test_coverage_mixed_status_documents(client, course, fixtures_dir, real_db_s
     assert failed_doc["dropped_pages"] is None
     assert failed_doc["chunks"] == 0
     assert failed_doc["ingest_error"] == "Unexpected error: boom"
+
+
+def test_coverage_ready_document_with_null_page_count_does_not_500(client, course, real_db_session):
+    # A "ready" document with no page_count / no chunks — an inconsistent state
+    # the real pipeline never produces, but a manual insert could. The endpoint
+    # must not 500 on it.
+    doc = Document(
+        course_id=course.id,
+        original_filename="weird.pdf",
+        original_format="pdf",
+        original_path="/tmp/weird.pdf",
+        file_sha256="e" * 64,
+        ingest_status="ready",
+    )
+    real_db_session.add(doc)
+    real_db_session.commit()
+
+    resp = client.get(f"/api/courses/{course.id}/coverage")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["summary"]["ready"] == 1
+    assert body["summary"]["total_pages"] == 0
+    assert body["summary"]["coverage_pct"] == 0.0
+
+    row = next(d for d in body["documents"] if d["document_id"] == doc.id)
+    assert row["ingest_status"] == "ready"
+    assert row["page_count"] is None
+    assert row["coverage_pct"] is None
+    assert row["dropped_pages"] is None
