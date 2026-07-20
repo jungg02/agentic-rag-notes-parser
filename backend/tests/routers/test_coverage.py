@@ -65,7 +65,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import get_db, get_session_factory
 from app.main import app
-from app.models import Course
+from app.models import Course, Document
 
 
 @pytest.fixture()
@@ -133,3 +133,44 @@ def test_coverage_reports_ready_document(client, course, fixtures_dir):
 def test_coverage_404_for_missing_course(client):
     resp = client.get("/api/courses/999999/coverage")
     assert resp.status_code == 404
+
+
+def test_coverage_mixed_status_documents(client, course, fixtures_dir, real_db_session):
+    pdf_bytes = Path(fixtures_dir, "sample.pdf").read_bytes()
+    ready_document_id = _upload_and_wait_ready(client, course.id, "sample.pdf", pdf_bytes)
+
+    failed = Document(
+        course_id=course.id,
+        original_filename="broken.pptx",
+        original_format="pptx",
+        original_path="/tmp/broken.pptx",
+        file_sha256="f" * 64,
+        ingest_status="failed",
+        ingest_error="Unexpected error: boom",
+    )
+    real_db_session.add(failed)
+    real_db_session.commit()
+
+    resp = client.get(f"/api/courses/{course.id}/coverage")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["summary"]["documents"] == 2
+    assert body["summary"]["ready"] == 1
+    assert body["summary"]["failed"] == 1
+    assert body["summary"]["in_progress"] == 0
+    assert body["summary"]["total_pages"] == 2
+    assert body["summary"]["coverage_pct"] == 100.0
+
+    document_ids = [d["document_id"] for d in body["documents"]]
+    assert document_ids == sorted(document_ids)
+    assert document_ids == [ready_document_id, failed.id]
+
+    failed_doc = next(d for d in body["documents"] if d["document_id"] == failed.id)
+    assert failed_doc["ingest_status"] == "failed"
+    assert failed_doc["page_count"] is None
+    assert failed_doc["pages_with_text"] is None
+    assert failed_doc["coverage_pct"] is None
+    assert failed_doc["dropped_pages"] is None
+    assert failed_doc["chunks"] == 0
+    assert failed_doc["ingest_error"] == "Unexpected error: boom"
