@@ -63,13 +63,28 @@ the session is the only supported operation) and returns to the existing
     const queryClient = useQueryClient();
     return useMutation({
       mutationFn: (sessionId: number) => apiFetch<void>(`/api/sessions/${sessionId}`, { method: "DELETE" }),
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["chat-sessions", courseId] }),
+      onSuccess: (_data, deletedSessionId) => {
+        queryClient.setQueryData<ChatSession[]>(["chat-sessions", courseId], (old) =>
+          (old ?? []).filter((session) => session.id !== deletedSessionId)
+        );
+        queryClient.invalidateQueries({ queryKey: ["chat-sessions", courseId] });
+      },
     });
   }
   ```
-  Invalidating `chat-sessions` is required so the deleted session's id is
-  gone from the list before `ChatPane`'s "select first session" effect can
-  reconsider it.
+  **Deviation from the naive `invalidateQueries`-only version:** `invalidateQueries`
+  only marks the query stale and triggers an async background refetch — it does not
+  clear cached data synchronously. `ChatPane`'s "select first session" effect
+  (`if (sessions.length > 0 && sessionId === null) setSessionId(sessions[0].id)`)
+  runs on the very next render, before that refetch resolves, and would still see
+  the stale cache still containing the just-deleted session — reselecting it and
+  permanently undoing the reset (the later refetch resolving to the correct list
+  no longer matters, since `sessionId` is non-null by then and the effect's guard
+  no longer fires). `setQueryData` patches the cache synchronously, in the same
+  tick as the mutation's success handling, so the reselect effect always sees a
+  cache already missing the deleted session on the render where `sessionId` flips
+  to `null`. `invalidateQueries` is kept alongside it purely as an eventual-consistency
+  guard against server-side drift.
 - `frontend/src/components/chat/ChatPane.tsx`: add a header row above
   `MessageList` containing a "Clear chat" button, rendered whenever
   `sessionId !== null`. Disabled while `isSending` (don't let a user
