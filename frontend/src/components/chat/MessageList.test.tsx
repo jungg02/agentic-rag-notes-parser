@@ -23,6 +23,13 @@ function makeMessages(count: number): ChatMessage[] {
   }));
 }
 
+const scrollIntoViewMock = vi.fn();
+
+beforeEach(() => {
+  scrollIntoViewMock.mockClear();
+  Element.prototype.scrollIntoView = scrollIntoViewMock;
+});
+
 describe("MessageList", () => {
   it("replaces [n] markers with clickable citation chips", () => {
     const onOpenSource = vi.fn();
@@ -60,13 +67,6 @@ describe("MessageList", () => {
 });
 
 describe("MessageList autoscroll", () => {
-  const scrollIntoViewMock = vi.fn();
-
-  beforeEach(() => {
-    scrollIntoViewMock.mockClear();
-    Element.prototype.scrollIntoView = scrollIntoViewMock;
-  });
-
   it("scrolls to bottom when a new message arrives while near the bottom", () => {
     const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} />);
     const listEl = container.querySelector(".message-list") as HTMLElement;
