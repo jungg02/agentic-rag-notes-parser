@@ -34,7 +34,7 @@ export default function App() {
                 <DocumentList courseId={selectedCourseId} />
               </div>
               <div className="app-column-chat">
-                <ChatPane courseId={selectedCourseId} onOpenSource={setOpenChunkId} />
+                <ChatPane key={selectedCourseId} courseId={selectedCourseId} onOpenSource={setOpenChunkId} />
               </div>
             </div>
           ) : (
