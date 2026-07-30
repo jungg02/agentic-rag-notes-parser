@@ -1,8 +1,27 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatMessage } from "../../api/chat";
 import { MessageList } from "./MessageList";
+
+function setLayout(
+  el: HTMLElement,
+  { scrollHeight, scrollTop, clientHeight }: { scrollHeight: number; scrollTop: number; clientHeight: number }
+) {
+  Object.defineProperty(el, "scrollHeight", { value: scrollHeight, configurable: true });
+  Object.defineProperty(el, "scrollTop", { value: scrollTop, configurable: true, writable: true });
+  Object.defineProperty(el, "clientHeight", { value: clientHeight, configurable: true });
+}
+
+function makeMessages(count: number): ChatMessage[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    role: i % 2 === 0 ? "user" : "assistant",
+    content: `Message ${i + 1}`,
+    created_at: "2026-01-01T00:00:00Z",
+    citations: [],
+  }));
+}
 
 describe("MessageList", () => {
   it("replaces [n] markers with clickable citation chips", () => {
@@ -37,5 +56,38 @@ describe("MessageList", () => {
     ];
     render(<MessageList messages={messages} onOpenSource={() => {}} />);
     expect(screen.getByText("[9]", { exact: false })).toBeInTheDocument();
+  });
+});
+
+describe("MessageList autoscroll", () => {
+  const scrollIntoViewMock = vi.fn();
+
+  beforeEach(() => {
+    scrollIntoViewMock.mockClear();
+    Element.prototype.scrollIntoView = scrollIntoViewMock;
+  });
+
+  it("scrolls to bottom when a new message arrives while near the bottom", () => {
+    const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} />);
+    const listEl = container.querySelector(".message-list") as HTMLElement;
+    setLayout(listEl, { scrollHeight: 500, scrollTop: 450, clientHeight: 100 });
+    fireEvent.scroll(listEl);
+    scrollIntoViewMock.mockClear();
+
+    rerender(<MessageList messages={makeMessages(2)} onOpenSource={() => {}} />);
+
+    expect(scrollIntoViewMock).toHaveBeenCalled();
+  });
+
+  it("does not scroll when the user has scrolled up away from the bottom", () => {
+    const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} />);
+    const listEl = container.querySelector(".message-list") as HTMLElement;
+    setLayout(listEl, { scrollHeight: 1000, scrollTop: 0, clientHeight: 200 });
+    fireEvent.scroll(listEl);
+    scrollIntoViewMock.mockClear();
+
+    rerender(<MessageList messages={makeMessages(2)} onOpenSource={() => {}} />);
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
   });
 });
