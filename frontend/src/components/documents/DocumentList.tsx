@@ -1,4 +1,4 @@
-import { useDocuments, useRetryDocument } from "../../api/documents";
+import { useDeleteDocument, useDocuments, useRetryDocument } from "../../api/documents";
 import "./DocumentList.css";
 
 interface DocumentListProps {
@@ -8,6 +8,12 @@ interface DocumentListProps {
 export function DocumentList({ courseId }: DocumentListProps) {
   const { data: documents, isLoading } = useDocuments(courseId);
   const retry = useRetryDocument(courseId);
+  const deleteDocument = useDeleteDocument(courseId);
+
+  const handleDelete = (documentId: number, filename: string) => {
+    if (!window.confirm(`Delete ${filename}? This cannot be undone.`)) return;
+    deleteDocument.mutate(documentId);
+  };
 
   return (
     <div className="document-list">
@@ -27,6 +33,9 @@ export function DocumentList({ courseId }: DocumentListProps) {
                   Retry
                 </button>
               )}
+              <button className="document-delete" onClick={() => handleDelete(doc.id, doc.original_filename)}>
+                Delete
+              </button>
             </li>
           ))}
         </ul>
