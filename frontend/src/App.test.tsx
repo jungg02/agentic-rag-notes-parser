@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
@@ -61,11 +61,11 @@ describe("App course switching", () => {
     render(<App />);
 
     const investmentButton = await screen.findByText("Investment and Finance (0)");
-    investmentButton.click();
+    fireEvent.click(investmentButton);
     await waitFor(() => expect(screen.getByText("Hello from Investment and Finance")).toBeInTheDocument());
 
     const st3131Button = await screen.findByText("ST3131 (0)");
-    st3131Button.click();
+    fireEvent.click(st3131Button);
 
     await waitFor(() => expect(screen.getByText("Start a new chat")).toBeInTheDocument());
     expect(screen.queryByText("Hello from Investment and Finance")).not.toBeInTheDocument();
