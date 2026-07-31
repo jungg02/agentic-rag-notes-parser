@@ -19,6 +19,7 @@ class PageLines:
     height: float
     rotation: int
     lines: list[ExtractedLine]
+    is_ocr: bool = False
 
 
 def extract_pages(pdf_path: Path) -> list[PageLines]:

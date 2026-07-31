@@ -25,6 +25,7 @@ class ChunkDraft:
     page_number: int
     bboxes: dict
     token_count: int
+    is_ocr: bool
 
 
 def _detect_header(lines: list[ExtractedLine]) -> str | None:
@@ -50,6 +51,7 @@ def _make_chunk(lines: list[ExtractedLine], page: PageLines, header: str | None)
         page_number=page.page_number,
         bboxes={"page_width": page.width, "page_height": page.height, "rects": _merge_rects(lines)},
         token_count=_token_count(embed_text),
+        is_ocr=page.is_ocr,
     )
 
 
