@@ -1,6 +1,6 @@
 # Study Notes Parser
 
-<video src="https://github.com/user-attachments/assets/f7c89bba-f7f0-4cd4-8a72-e306993464d9" controls width = "700"></video>
+<video src="https://github.com/user-attachments/assets/ec8fe744-5214-47cf-bb63-e9b0d99d01c7" controls width = "700"></video>
 
 A personal, local-first app for studying from your own notes. Upload PDFs, Word
 docs, and PowerPoint slides, organized into courses. Ask questions in a chat
