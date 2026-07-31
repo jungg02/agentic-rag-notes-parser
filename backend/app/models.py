@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Computed,
     ForeignKey,
@@ -74,6 +75,7 @@ class Chunk(Base):
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     bboxes: Mapped[dict] = mapped_column(JSONB, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_ocr: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     tsv = mapped_column(
         TSVECTOR,
