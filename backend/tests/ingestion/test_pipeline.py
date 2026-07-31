@@ -48,6 +48,7 @@ def test_run_ingestion_pdf_end_to_end(real_db_session, test_engine, fixtures_dir
         assert len(chunks) >= 2
         assert all(c.course_id == course.id for c in chunks)
         assert any("mitochondria" in c.text.lower() for c in chunks)
+        assert all(not c.is_ocr for c in chunks)
     finally:
         real_db_session.delete(course)
         real_db_session.commit()
@@ -218,6 +219,44 @@ def test_run_ingestion_docx_converts_and_embeds(real_db_session, test_engine, fi
         assert refreshed.ingest_status == "ready"
         assert refreshed.pdf_path is not None
         assert refreshed.pdf_path.endswith(".pdf")
+    finally:
+        real_db_session.delete(course)
+        real_db_session.commit()
+
+
+def test_run_ingestion_ocrs_scanned_pdf(real_db_session, test_engine, fixtures_dir, tmp_path):
+    course = Course(name="Pipeline Test Course OCR")
+    real_db_session.add(course)
+    real_db_session.commit()
+
+    try:
+        doc_dir = tmp_path / "doc4"
+        doc_dir.mkdir()
+        original = doc_dir / "original.pdf"
+        shutil.copy(Path(fixtures_dir) / "scanned.pdf", original)
+
+        document = Document(
+            course_id=course.id,
+            original_filename="scanned.pdf",
+            original_format="pdf",
+            original_path=str(original),
+            file_sha256="e" * 64,
+        )
+        real_db_session.add(document)
+        real_db_session.commit()
+        document_id = document.id
+
+        session_factory = sessionmaker(bind=test_engine)
+        run_ingestion(document_id, session_factory)
+
+        real_db_session.expire_all()
+        refreshed = real_db_session.get(Document, document_id)
+        assert refreshed.ingest_status == "ready"
+
+        chunks = real_db_session.query(Chunk).filter_by(document_id=document_id).all()
+        assert len(chunks) >= 1
+        assert all(c.is_ocr for c in chunks)
+        assert any("osmosis" in c.text.lower() for c in chunks)
     finally:
         real_db_session.delete(course)
         real_db_session.commit()

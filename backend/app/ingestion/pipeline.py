@@ -2,13 +2,15 @@ import logging
 from pathlib import Path
 from typing import Callable
 
+import fitz
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.ingestion.chunker import chunk_pages
 from app.ingestion.convert import ConversionError, convert_to_pdf
 from app.ingestion.embedder import embed_texts
-from app.ingestion.parse import extract_pages
+from app.ingestion.ocr import ocr_page
+from app.ingestion.parse import PageLines, extract_pages
 from app.models import Chunk, Document
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,23 @@ def _set_status(db: Session, document_id: int, status: str, error: str | None = 
     doc.ingest_status = status
     doc.ingest_error = error
     db.commit()
+
+
+def _ocr_low_text_pages(pdf_path: Path, pages: list[PageLines]) -> None:
+    """Replace any page's lines with OCR output if its native text is too
+    sparse to be useful. Mutates `pages` in place."""
+    needs_ocr = [p for p in pages if sum(len(line.text) for line in p.lines) < MIN_TEXT_CHARS_PER_PAGE]
+    if not needs_ocr:
+        return
+
+    fitz_doc = fitz.open(pdf_path)
+    try:
+        for page_lines in needs_ocr:
+            fitz_page = fitz_doc[page_lines.page_number - 1]
+            page_lines.lines = ocr_page(fitz_page)
+            page_lines.is_ocr = True
+    finally:
+        fitz_doc.close()
 
 
 def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -> None:
@@ -52,6 +71,7 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
 
             _set_status(db, document_id, "parsing")
             pages = extract_pages(pdf_path)
+            _ocr_low_text_pages(pdf_path, pages)
 
             total_chars = sum(len(line.text) for page in pages for line in page.lines)
             if pages and total_chars < MIN_TEXT_CHARS_PER_PAGE * len(pages):
@@ -85,6 +105,7 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
                         bboxes=draft.bboxes,
                         token_count=draft.token_count,
                         embedding=vector,
+                        is_ocr=draft.is_ocr,
                     )
                 )
 
