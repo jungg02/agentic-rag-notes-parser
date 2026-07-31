@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy.orm import sessionmaker
 
 from app.ingestion.convert import ConversionError
-from app.ingestion.pipeline import _set_status, run_ingestion
+from app.ingestion.parse import ExtractedLine, PageLines
+from app.ingestion.pipeline import _ocr_low_text_pages, _set_status, run_ingestion
 from app.models import Chunk, Course, Document
 
 
@@ -48,6 +49,7 @@ def test_run_ingestion_pdf_end_to_end(real_db_session, test_engine, fixtures_dir
         assert len(chunks) >= 2
         assert all(c.course_id == course.id for c in chunks)
         assert any("mitochondria" in c.text.lower() for c in chunks)
+        assert all(not c.is_ocr for c in chunks)
     finally:
         real_db_session.delete(course)
         real_db_session.commit()
@@ -218,6 +220,118 @@ def test_run_ingestion_docx_converts_and_embeds(real_db_session, test_engine, fi
         assert refreshed.ingest_status == "ready"
         assert refreshed.pdf_path is not None
         assert refreshed.pdf_path.endswith(".pdf")
+    finally:
+        real_db_session.delete(course)
+        real_db_session.commit()
+
+
+def test_run_ingestion_ocrs_scanned_pdf(real_db_session, test_engine, fixtures_dir, tmp_path):
+    course = Course(name="Pipeline Test Course OCR")
+    real_db_session.add(course)
+    real_db_session.commit()
+
+    try:
+        doc_dir = tmp_path / "doc4"
+        doc_dir.mkdir()
+        original = doc_dir / "original.pdf"
+        shutil.copy(Path(fixtures_dir) / "scanned.pdf", original)
+
+        document = Document(
+            course_id=course.id,
+            original_filename="scanned.pdf",
+            original_format="pdf",
+            original_path=str(original),
+            file_sha256="e" * 64,
+        )
+        real_db_session.add(document)
+        real_db_session.commit()
+        document_id = document.id
+
+        session_factory = sessionmaker(bind=test_engine)
+        run_ingestion(document_id, session_factory)
+
+        real_db_session.expire_all()
+        refreshed = real_db_session.get(Document, document_id)
+        assert refreshed.ingest_status == "ready"
+
+        chunks = real_db_session.query(Chunk).filter_by(document_id=document_id).all()
+        assert len(chunks) >= 1
+        assert all(c.is_ocr for c in chunks)
+        assert any("osmosis" in c.text.lower() for c in chunks)
+    finally:
+        real_db_session.delete(course)
+        real_db_session.commit()
+
+
+def test_ocr_low_text_pages_keeps_native_text_when_ocr_is_worse(fixtures_dir):
+    """A page with genuine, if sparse, native text (e.g. a title-only slide)
+    must not be discarded in favor of OCR output that recovers less text --
+    OCR is a fallback for pages that have nothing useful, not an override
+    for every sparse page."""
+    sparse_line = ExtractedLine(text="Title", bbox=(72, 100, 200, 120), font_size=18, bold=True)
+    page = PageLines(page_number=1, width=612.0, height=792.0, rotation=0, lines=[sparse_line])
+
+    with patch("app.ingestion.pipeline.ocr_page", return_value=[]):
+        _ocr_low_text_pages(f"{fixtures_dir}/sample.pdf", [page])
+
+    assert page.lines == [sparse_line]
+    assert page.is_ocr is False
+
+
+def test_ocr_low_text_pages_skips_page_on_ocr_error(fixtures_dir, caplog):
+    """If ocr_page() raises for one page, that page's native text is kept
+    and no exception propagates -- one page's OCR failure must not fail the
+    whole document."""
+    import logging
+
+    sparse_line = ExtractedLine(text="Title", bbox=(72, 100, 200, 120), font_size=18, bold=True)
+    page = PageLines(page_number=1, width=612.0, height=792.0, rotation=0, lines=[sparse_line])
+
+    with patch("app.ingestion.pipeline.ocr_page", side_effect=RuntimeError("tesseract not found")):
+        with caplog.at_level(logging.WARNING):
+            _ocr_low_text_pages(f"{fixtures_dir}/sample.pdf", [page])  # must not raise
+
+    assert page.lines == [sparse_line]
+    assert page.is_ocr is False
+    assert any("OCR failed for page" in r.getMessage() for r in caplog.records)
+
+
+def test_run_ingestion_mixed_pdf_ocrs_only_the_scanned_page(real_db_session, test_engine, fixtures_dir, tmp_path):
+    course = Course(name="Pipeline Test Course Mixed")
+    real_db_session.add(course)
+    real_db_session.commit()
+
+    try:
+        doc_dir = tmp_path / "doc5"
+        doc_dir.mkdir()
+        original = doc_dir / "original.pdf"
+        shutil.copy(Path(fixtures_dir) / "mixed.pdf", original)
+
+        document = Document(
+            course_id=course.id,
+            original_filename="mixed.pdf",
+            original_format="pdf",
+            original_path=str(original),
+            file_sha256="f" * 64,
+        )
+        real_db_session.add(document)
+        real_db_session.commit()
+        document_id = document.id
+
+        session_factory = sessionmaker(bind=test_engine)
+        run_ingestion(document_id, session_factory)
+
+        real_db_session.expire_all()
+        refreshed = real_db_session.get(Document, document_id)
+        assert refreshed.ingest_status == "ready"
+
+        chunks = real_db_session.query(Chunk).filter_by(document_id=document_id).all()
+        page1_chunks = [c for c in chunks if c.page_number == 1]
+        page2_chunks = [c for c in chunks if c.page_number == 2]
+        assert page1_chunks and all(not c.is_ocr for c in page1_chunks)
+        assert page2_chunks and all(c.is_ocr for c in page2_chunks)
+        assert any("ribosomes" in c.text.lower() for c in page1_chunks)
+        assert any("chlorophyll" in c.text.lower() for c in page2_chunks)
     finally:
         real_db_session.delete(course)
         real_db_session.commit()

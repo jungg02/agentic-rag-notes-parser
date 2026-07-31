@@ -39,6 +39,7 @@ This is Phase 1 of a planned multi-phase build: a plain hybrid-RAG pipeline
 | Embeddings | [`sentence-transformers`](https://www.sbert.net/), `BAAI/bge-small-en-v1.5` (384-dim, runs locally — no API calls, no per-query cost) |
 | Reranking | Local cross-encoder, `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | Document parsing | [PyMuPDF](https://pymupdf.readthedocs.io/) (`fitz`) for text + bounding boxes; `python-pptx` for slide titles |
+| OCR | [Tesseract](https://github.com/tesseract-ocr/tesseract) via `pytesseract`, local fallback for scanned/image-only pages |
 | Format conversion | Headless [LibreOffice](https://www.libreoffice.org/) (DOCX/PPTX → PDF) |
 | PDF rendering | [`pdfjs-dist`](https://mozilla.github.io/pdf.js/), used directly (not `react-pdf`) for canvas-level control |
 | LLM | Provider-agnostic — Anthropic or any OpenAI-compatible API (config-driven) |
@@ -63,7 +64,9 @@ at each step (`pending → converting → parsing → embedding → ready`, or
 3. **Parse** — PyMuPDF opens the normalized PDF and extracts per-page lines
    with bounding boxes. This is the *only* content-extraction path for every
    format, so citations always point at the file that actually gets
-   rendered later.
+   rendered later. Any page whose native text is too sparse is OCR'd (local
+   Tesseract) as a fallback, replacing that page's text only if OCR recovers
+   more than the native extraction did.
 4. **Chunk** — ~350 tokens/chunk with ~80-token overlap, never crossing a
    page boundary (keeps each chunk's page number and bounding boxes exact).
    Sparse slides get a carried-forward context header (e.g. "Lecture 4 ›
@@ -74,9 +77,11 @@ at each step (`pending → converting → parsing → embedding → ready`, or
    `ingest_error` with the original file retained, so ingestion can be
    retried without re-uploading.
 
-Scanned/image-only PDFs with no extractable text fail ingestion loudly rather
-than silently producing empty chunks (OCR is a possible future feature, not
-part of Phase 1).
+Scanned/image-only pages are recovered via local OCR (Tesseract) when their
+native text is too sparse to be useful — this also handles documents that are
+only partially scanned (some pages native, some not). A document where even
+OCR can't recover enough text still fails ingestion loudly rather than
+silently producing empty chunks.
 
 ### 2. Hybrid retrieval
 
@@ -148,6 +153,8 @@ Useful in environments without Docker/nested virtualization support.
   extension available (`CREATE EXTENSION vector;`)
 - Headless-capable [LibreOffice](https://www.libreoffice.org/) on `PATH`
   (needed for DOCX/PPTX conversion)
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) on `PATH`
+  (needed for OCR fallback on scanned/image-only pages)
 
 **Database:**
 

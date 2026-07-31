@@ -16,6 +16,7 @@ def _document_coverage(
     ingest_error: str | None,
     page_count: int | None,
     present_pages: set[int],
+    ocr_pages: set[int],
     chunk_count: int,
     token_sum: int,
 ) -> dict:
@@ -32,6 +33,7 @@ def _document_coverage(
             "pages_with_text": pages_with_text,
             "coverage_pct": coverage_pct,
             "dropped_pages": dropped_pages,
+            "ocr_pages": sorted(p for p in ocr_pages if 1 <= p <= page_count),
             "chunks": chunk_count,
             "tokens": token_sum,
             "ingest_error": ingest_error,
@@ -44,6 +46,7 @@ def _document_coverage(
         "pages_with_text": None,
         "coverage_pct": None,
         "dropped_pages": None,
+        "ocr_pages": None,
         "chunks": chunk_count,
         "tokens": token_sum,
         "ingest_error": ingest_error,
@@ -61,23 +64,27 @@ def course_coverage(course_id: int, db: Session = Depends(get_db)):
     ).all()
 
     doc_ids = [d.id for d in documents]
-    agg: dict[int, tuple[set[int], int, int]] = {}
+    agg: dict[int, tuple[set[int], set[int], int, int]] = {}
     if doc_ids:
         rows = db.execute(
             select(
                 Chunk.document_id,
                 func.array_agg(distinct(Chunk.page_number)),
+                func.array_agg(distinct(Chunk.page_number)).filter(Chunk.is_ocr),
                 func.count(Chunk.id),
                 func.coalesce(func.sum(Chunk.token_count), 0),
             )
             .where(Chunk.document_id.in_(doc_ids))
             .group_by(Chunk.document_id)
         ).all()
-        agg = {row[0]: (set(row[1]), row[2], row[3]) for row in rows}
+        agg = {
+            row[0]: (set(row[1]), set(row[2]) if row[2] else set(), row[3], row[4])
+            for row in rows
+        }
 
     doc_reports = []
     for d in documents:
-        present_pages, chunk_count, token_sum = agg.get(d.id, (set(), 0, 0))
+        present_pages, ocr_pages, chunk_count, token_sum = agg.get(d.id, (set(), set(), 0, 0))
         doc_reports.append(
             _document_coverage(
                 document_id=d.id,
@@ -86,6 +93,7 @@ def course_coverage(course_id: int, db: Session = Depends(get_db)):
                 ingest_error=d.ingest_error,
                 page_count=d.page_count,
                 present_pages=present_pages,
+                ocr_pages=ocr_pages,
                 chunk_count=chunk_count,
                 token_sum=token_sum,
             )

@@ -50,3 +50,28 @@ def test_chunks_never_span_pages():
     assert pages_seen == {1, 2}
     for c in chunks:
         assert c.page_number in (1, 2)
+
+
+def test_chunks_carry_is_ocr_flag_from_page():
+    ocr_page = PageLines(
+        page_number=1,
+        width=612.0,
+        height=792.0,
+        rotation=0,
+        lines=[_line("Scanned content sentence.")],
+        is_ocr=True,
+    )
+    native_page = PageLines(
+        page_number=2,
+        width=612.0,
+        height=792.0,
+        rotation=0,
+        lines=[_line("Native content sentence.")],
+    )
+
+    chunks = chunk_pages([ocr_page, native_page])
+
+    ocr_chunks = [c for c in chunks if c.page_number == 1]
+    native_chunks = [c for c in chunks if c.page_number == 2]
+    assert ocr_chunks and all(c.is_ocr for c in ocr_chunks)
+    assert native_chunks and all(not c.is_ocr for c in native_chunks)
