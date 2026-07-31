@@ -226,6 +226,18 @@ def test_coverage_ready_document_with_null_page_count_does_not_500(client, cours
     assert row["dropped_pages"] is None
 
 
+def test_coverage_reports_ocr_pages_for_mixed_document(client, course, fixtures_dir):
+    pdf_bytes = Path(fixtures_dir, "mixed.pdf").read_bytes()
+    document_id = _upload_and_wait_ready(client, course.id, "mixed.pdf", pdf_bytes)
+
+    resp = client.get(f"/api/courses/{course.id}/coverage")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    doc = next(d for d in body["documents"] if d["document_id"] == document_id)
+    assert doc["ocr_pages"] == [2]
+
+
 def test_coverage_reports_ocr_pages_for_document(client, course, fixtures_dir):
     pdf_bytes = Path(fixtures_dir, "scanned.pdf").read_bytes()
     document_id = _upload_and_wait_ready(client, course.id, "scanned.pdf", pdf_bytes)

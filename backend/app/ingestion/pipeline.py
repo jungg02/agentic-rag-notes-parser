@@ -32,8 +32,12 @@ def _set_status(db: Session, document_id: int, status: str, error: str | None = 
 
 
 def _ocr_low_text_pages(pdf_path: Path, pages: list[PageLines]) -> None:
-    """Replace any page's lines with OCR output if its native text is too
-    sparse to be useful. Mutates `pages` in place."""
+    """OCR any page whose native text is too sparse to be useful, adopting
+    the OCR result only if it recovers more text than the page's native
+    extraction -- a page with genuine (if sparse) native text, like a
+    title-only slide, must never be discarded for a worse or failed OCR
+    attempt. A single page's OCR failure is logged and skipped rather than
+    failing the whole document. Mutates `pages` in place."""
     needs_ocr = [p for p in pages if sum(len(line.text) for line in p.lines) < MIN_TEXT_CHARS_PER_PAGE]
     if not needs_ocr:
         return
@@ -41,9 +45,14 @@ def _ocr_low_text_pages(pdf_path: Path, pages: list[PageLines]) -> None:
     fitz_doc = fitz.open(pdf_path)
     try:
         for page_lines in needs_ocr:
-            fitz_page = fitz_doc[page_lines.page_number - 1]
-            page_lines.lines = ocr_page(fitz_page)
-            page_lines.is_ocr = True
+            try:
+                ocr_lines = ocr_page(fitz_doc[page_lines.page_number - 1])
+            except Exception:  # noqa: BLE001 - one page's OCR failure must not fail the whole document
+                logger.warning("OCR failed for page %s", page_lines.page_number, exc_info=True)
+                continue
+            if sum(len(line.text) for line in ocr_lines) > sum(len(line.text) for line in page_lines.lines):
+                page_lines.lines = ocr_lines
+                page_lines.is_ocr = True
     finally:
         fitz_doc.close()
 
