@@ -9,12 +9,14 @@ def test_document_coverage_ready_partial():
         ingest_error=None,
         page_count=5,
         present_pages={1, 2, 4},
+        ocr_pages=set(),
         chunk_count=9,
         token_sum=1800,
     )
     assert result["pages_with_text"] == 3
     assert result["dropped_pages"] == [3, 5]
     assert result["coverage_pct"] == 60.0
+    assert result["ocr_pages"] == []
     assert result["chunks"] == 9
     assert result["tokens"] == 1800
     assert result["ingest_error"] is None
@@ -28,12 +30,29 @@ def test_document_coverage_ready_full():
         ingest_error=None,
         page_count=3,
         present_pages={1, 2, 3},
+        ocr_pages=set(),
         chunk_count=6,
         token_sum=1200,
     )
     assert result["dropped_pages"] == []
     assert result["coverage_pct"] == 100.0
     assert result["pages_with_text"] == 3
+    assert result["ocr_pages"] == []
+
+
+def test_document_coverage_reports_ocr_pages():
+    result = _document_coverage(
+        document_id=10,
+        filename="scanned.pdf",
+        ingest_status="ready",
+        ingest_error=None,
+        page_count=3,
+        present_pages={1, 2, 3},
+        ocr_pages={2},
+        chunk_count=3,
+        token_sum=600,
+    )
+    assert result["ocr_pages"] == [2]
 
 
 def test_document_coverage_failed_reports_nulls_and_error():
@@ -44,6 +63,7 @@ def test_document_coverage_failed_reports_nulls_and_error():
         ingest_error="Unexpected error: boom",
         page_count=None,
         present_pages=set(),
+        ocr_pages=set(),
         chunk_count=0,
         token_sum=0,
     )
@@ -51,6 +71,7 @@ def test_document_coverage_failed_reports_nulls_and_error():
     assert result["pages_with_text"] is None
     assert result["coverage_pct"] is None
     assert result["dropped_pages"] is None
+    assert result["ocr_pages"] is None
     assert result["ingest_status"] == "failed"
     assert result["ingest_error"] == "Unexpected error: boom"
 
@@ -203,3 +224,15 @@ def test_coverage_ready_document_with_null_page_count_does_not_500(client, cours
     assert row["page_count"] is None
     assert row["coverage_pct"] is None
     assert row["dropped_pages"] is None
+
+
+def test_coverage_reports_ocr_pages_for_document(client, course, fixtures_dir):
+    pdf_bytes = Path(fixtures_dir, "scanned.pdf").read_bytes()
+    document_id = _upload_and_wait_ready(client, course.id, "scanned.pdf", pdf_bytes)
+
+    resp = client.get(f"/api/courses/{course.id}/coverage")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    doc = next(d for d in body["documents"] if d["document_id"] == document_id)
+    assert doc["ocr_pages"] == [1]
