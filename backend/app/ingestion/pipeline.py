@@ -22,6 +22,8 @@ class IngestionError(Exception):
 
 def _set_status(db: Session, document_id: int, status: str, error: str | None = None) -> None:
     doc = db.get(Document, document_id)
+    if doc is None:
+        return
     doc.ingest_status = status
     doc.ingest_error = error
     db.commit()
@@ -43,6 +45,8 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
                 pdf_path = convert_to_pdf(Path(doc.original_path), output_dir)
 
             doc = db.get(Document, document_id)
+            if doc is None:
+                return
             doc.pdf_path = str(pdf_path)
             db.commit()
 
@@ -85,6 +89,8 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
                 )
 
             doc = db.get(Document, document_id)
+            if doc is None:
+                return
             doc.page_count = len(pages)
             doc.ingest_status = "ready"
             doc.ingest_error = None

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import type { ChatMessage } from "../../api/chat";
 import { CitationChip } from "./CitationChip";
@@ -8,6 +8,8 @@ interface MessageListProps {
   messages: ChatMessage[];
   onOpenSource: (chunkId: number) => void;
 }
+
+const NEAR_BOTTOM_THRESHOLD_PX = 80;
 
 function renderContentWithCitations(message: ChatMessage, onOpenSource: (chunkId: number) => void): ReactNode[] {
   const citationsByMarker = new Map(message.citations.map((c) => [c.marker, c]));
@@ -27,6 +29,22 @@ function renderContentWithCitations(message: ChatMessage, onOpenSource: (chunkId
 }
 
 export function MessageList({ messages, onOpenSource }: MessageListProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD_PX;
+  };
+
+  useEffect(() => {
+    if (isNearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    }
+  }, [messages]);
+
   if (messages.length === 0) {
     return (
       <div className="message-list">
@@ -36,12 +54,13 @@ export function MessageList({ messages, onOpenSource }: MessageListProps) {
   }
 
   return (
-    <div className="message-list">
+    <div className="message-list" ref={containerRef} onScroll={handleScroll}>
       {messages.map((message) => (
         <div key={message.id} className={`message message-${message.role}`}>
           {renderContentWithCitations(message, onOpenSource)}
         </div>
       ))}
+      <div ref={bottomRef} />
     </div>
   );
 }

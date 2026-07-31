@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentList } from "./DocumentList";
@@ -54,5 +54,73 @@ describe("DocumentList", () => {
     expect(screen.getByText("week2.docx")).toBeInTheDocument();
     expect(screen.getByText("failed")).toBeInTheDocument();
     expect(screen.getByText("Retry")).toBeInTheDocument();
+  });
+});
+
+describe("DocumentList delete", () => {
+  let deleted = false;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    deleted = false;
+    fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === "/api/courses/1/documents") {
+        return new Response(
+          JSON.stringify(
+            deleted
+              ? []
+              : [
+                  {
+                    id: 1,
+                    course_id: 1,
+                    original_filename: "week1.pdf",
+                    original_format: "pdf",
+                    ingest_status: "ready",
+                    ingest_error: null,
+                    page_count: 3,
+                    created_at: "2026-01-01T00:00:00Z",
+                  },
+                ]
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url === "/api/documents/1" && options?.method === "DELETE") {
+        deleted = true;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("deletes the document when the user confirms", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithClient(<DocumentList courseId={1} />);
+    await waitFor(() => expect(screen.getByText("week1.pdf")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Delete"));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/documents/1", expect.objectContaining({ method: "DELETE" }))
+    );
+    await waitFor(() => expect(screen.queryByText("week1.pdf")).not.toBeInTheDocument());
+  });
+
+  it("does not delete when the user cancels the confirmation", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderWithClient(<DocumentList courseId={1} />);
+    await waitFor(() => expect(screen.getByText("week1.pdf")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Delete"));
+
+    expect(window.confirm).toHaveBeenCalledWith("Delete week1.pdf? This cannot be undone.");
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/documents/1", expect.objectContaining({ method: "DELETE" }));
+    expect(screen.getByText("week1.pdf")).toBeInTheDocument();
   });
 });

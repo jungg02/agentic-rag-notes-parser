@@ -47,3 +47,11 @@ export function useRetryDocument(courseId: number) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["documents", courseId] }),
   });
 }
+
+export function useDeleteDocument(courseId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (documentId: number) => apiFetch<void>(`/api/documents/${documentId}`, { method: "DELETE" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["documents", courseId] }),
+  });
+}

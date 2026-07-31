@@ -15,3 +15,14 @@
   text-align: center;
   color: var(--color-ink-soft);
 }
+
+.chat-pane-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-5) 0;
+}
+
+.chat-pane-clear {
+  font-size: var(--text-xs);
+  padding: 0.35em 0.7em;
+}
