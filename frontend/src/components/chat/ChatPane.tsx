@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import type { ChatMessage } from "../../api/chat";
-import { sendMessageStream, useChatMessages, useChatSessions, useCreateChatSession } from "../../api/chat";
+import {
+  sendMessageStream,
+  useChatMessages,
+  useChatSessions,
+  useCreateChatSession,
+  useDeleteChatSession,
+} from "../../api/chat";
 import { ChatInput } from "./ChatInput";
 import "./ChatPane.css";
 import { MessageList } from "./MessageList";
@@ -16,6 +22,7 @@ interface ChatPaneProps {
 export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
   const { data: sessions } = useChatSessions(courseId);
   const createSession = useCreateChatSession(courseId);
+  const deleteSession = useDeleteChatSession(courseId);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const { data: persistedMessages } = useChatMessages(sessionId);
   const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([]);
@@ -30,6 +37,16 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
 
   const handleStartSession = () => {
     createSession.mutate(undefined, { onSuccess: (session) => setSessionId(session.id) });
+  };
+
+  const handleClearChat = () => {
+    if (sessionId === null) return;
+    deleteSession.mutate(sessionId, {
+      onSuccess: () => {
+        setSessionId(null);
+        setStreamingMessages([]);
+      },
+    });
   };
 
   const handleSend = async (content: string) => {
@@ -89,6 +106,11 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
 
   return (
     <div className="chat-pane">
+      <div className="chat-pane-header">
+        <button className="chat-pane-clear" onClick={handleClearChat} disabled={isSending}>
+          Clear chat
+        </button>
+      </div>
       <MessageList messages={allMessages} onOpenSource={onOpenSource} />
       <ChatInput onSend={handleSend} disabled={isSending} />
     </div>

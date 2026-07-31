@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy.orm import sessionmaker
 
 from app.ingestion.convert import ConversionError
-from app.ingestion.pipeline import run_ingestion
+from app.ingestion.pipeline import _set_status, run_ingestion
 from app.models import Chunk, Course, Document
 
 
@@ -137,6 +137,55 @@ def test_run_ingestion_logs_handled_error(caplog):
     assert doc.ingest_status == "failed"
     assert doc.ingest_error == "boom"
     assert any("Ingestion failed for document" in r.getMessage() for r in caplog.records)
+
+
+def test_set_status_noop_when_document_already_deleted():
+    """_set_status must not raise when the document row is gone -- it has
+    nothing left to update."""
+    session = MagicMock()
+    session.get.return_value = None
+
+    _set_status(session, 1, "failed", "boom")
+
+    session.commit.assert_not_called()
+
+
+def test_run_ingestion_stops_cleanly_if_document_deleted_before_pdf_path_write():
+    """If the document is deleted between the initial existence check and the
+    pdf_path write (e.g. via a concurrent delete-document request), run_ingestion
+    must return cleanly instead of raising on a deleted row."""
+    doc = MagicMock()
+    doc.original_format = "pdf"
+    doc.original_path = "/data/whatever.pdf"
+
+    session = MagicMock()
+    session.get.side_effect = [doc, None]
+
+    run_ingestion(1, lambda: session)  # must not raise
+
+    session.commit.assert_not_called()
+
+
+def test_run_ingestion_survives_document_deleted_during_failure_handling(caplog):
+    """A document can be deleted (via the delete-document endpoint) while its
+    ingestion is still in flight. If that happens exactly as an unrelated
+    ingestion error is being handled, the failure-handling _set_status call
+    used to hit a deleted row and raise a second, uncaught exception that
+    escaped the background task entirely -- masking the original failure.
+    _set_status must no-op instead."""
+    doc = MagicMock()
+    doc.original_format = "pdf"
+    doc.original_path = "/data/whatever.pdf"
+
+    session = MagicMock()
+    session.get.side_effect = [doc, doc, doc, None]
+
+    with patch("app.ingestion.pipeline.extract_pages", side_effect=RuntimeError("boom")):
+        with caplog.at_level(logging.ERROR):
+            run_ingestion(1, lambda: session)  # must not raise
+
+    named = [r for r in caplog.records if "ingesting document" in r.getMessage()]
+    assert named, "the original failure must still be logged"
 
 
 def test_run_ingestion_docx_converts_and_embeds(real_db_session, test_engine, fixtures_dir, tmp_path):

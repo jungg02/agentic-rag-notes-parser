@@ -39,3 +39,9 @@
   font-size: var(--text-xs);
   padding: 0.35em 0.7em;
 }
+
+.document-delete {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  padding: 0.35em 0.7em;
+}

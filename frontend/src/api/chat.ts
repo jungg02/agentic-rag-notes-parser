@@ -40,6 +40,19 @@ export function useCreateChatSession(courseId: number) {
   });
 }
 
+export function useDeleteChatSession(courseId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: number) => apiFetch<void>(`/api/sessions/${sessionId}`, { method: "DELETE" }),
+    onSuccess: (_data, deletedSessionId) => {
+      queryClient.setQueryData<ChatSession[]>(["chat-sessions", courseId], (old) =>
+        (old ?? []).filter((session) => session.id !== deletedSessionId)
+      );
+      queryClient.invalidateQueries({ queryKey: ["chat-sessions", courseId] });
+    },
+  });
+}
+
 export function useChatMessages(sessionId: number | null) {
   return useQuery({
     queryKey: ["chat-messages", sessionId],
