@@ -1,0 +1,15 @@
+{
+  "course_id": 4,
+  "_note": "Phase 4 figure-retrieval evaluation set (RETRIEVAL_UPGRADE_PLAN.md acceptance criterion: 'Evaluated with the Phase 3 harness -- not just demoed'). Every item's `expected` grounding was determined by extracting the real figure from the real ingested corpus and visually inspecting the actual image content before writing the query -- not generated then spot-checked. Deliberately smaller than Phase 3's 62-item text set (9 items): Phase 4 is explicitly scoped in the plan as additive/lower-priority ('only worth doing if Phases 1-3 are solid'), and this corpus only has ~105 real (non-decorative) embedded figures in course_id=4 to draw from.",
+  "items": [
+    {"id": "fig01", "query": "Show me a screenshot of reading data from an Excel spreadsheet in R.", "expected": [{"document": "Week3_slides.pdf", "page": 13}]},
+    {"id": "fig02", "query": "Show me a code comparison between dplyr and SQL for grouping and summarizing data.", "expected": [{"document": "Week7_slides.pdf", "page": 38}]},
+    {"id": "fig03", "query": "Show me a diagram illustrating how a join matches keys between two tables.", "expected": [{"document": "Week7_slides.pdf", "page": 5}]},
+    {"id": "fig04", "query": "Show me a diagram illustrating a many-to-many join producing duplicate rows.", "expected": [{"document": "Week7_slides.pdf", "page": 22}]},
+    {"id": "fig05", "query": "Show me a diagram illustrating how arrange() reorders rows in a table.", "expected": [{"document": "Week5_slides.pdf", "page": 25}]},
+    {"id": "fig06", "query": "Show me the tidyverse package logos.", "expected": [{"document": "Week5_slides.pdf", "page": 72}]},
+    {"id": "fig07", "query": "Show me a screenshot of the RStudio interface with its editor, console, and output panes.", "expected": [{"document": "Week1_slides.pdf", "page": 15}]},
+    {"id": "fig08", "query": "What output formats can an R Markdown document be rendered to?", "expected": [{"document": "Week2_slides.pdf", "page": 63}]},
+    {"id": "fig09", "query": "Show me a screenshot of a nested list structure imported from JSON data in R.", "expected": [{"document": "Week4_slides.pdf", "page": 12}]}
+  ]
+}

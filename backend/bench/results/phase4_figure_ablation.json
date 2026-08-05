@@ -1,0 +1,16 @@
+{
+  "n_items": 9,
+  "fused": {
+    "recall_at_3": 0.4444,
+    "mrr_at_3": 0.3889,
+    "ndcg_at_10": 0.4513
+  },
+  "dense_only": {
+    "recall_at_3": 0.4444,
+    "mrr_at_3": 0.3889,
+    "ndcg_at_10": 0.4513
+  },
+  "latency_ms": {
+    "mean": 215.2
+  }
+}
