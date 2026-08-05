@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -5,12 +7,15 @@ from app.db import get_db
 from app.ingestion.embedder import embed_texts
 from app.main import app
 from app.models import Chunk, Course, Document
+from app.providers.base import LLMResponse
 from app.providers.factory import get_provider
 
 
 class FakeProvider:
     def generate(self, messages, system=None, max_tokens=2048):
-        raise NotImplementedError
+        # Query understanding / compaction summarization call.
+        payload = json.dumps({"intent": "factual_lookup", "needs_rewrite": False, "standalone_query": None})
+        return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
 
     def generate_stream(self, messages, system=None, max_tokens=2048):
         yield "Mitochondria produce ATP [1]. "

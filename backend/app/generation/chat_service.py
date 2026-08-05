@@ -5,8 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.generation.prompts import build_system_prompt, parse_citations
-from app.models import ChatMessage, ChatSession, Course, MessageCitation
+from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn, RetrievedChunk
 from app.providers.base import LLMMessage, LLMProvider
+from app.query.compaction import get_working_history
+from app.query.understanding import understand_query
 from app.retrieval.service import retrieve
 
 
@@ -31,12 +33,36 @@ def stream_assistant_reply(
 ) -> Iterator[tuple[str, dict]]:
     course = db.get(Course, session.course_id)
 
-    db.add(ChatMessage(session_id=session.id, role="user", content=user_content))
+    # History *before* this turn -- query understanding resolves the new
+    # message against what came before it, not against itself.
+    prior_history = _history_messages(db, session.id)
+
+    user_message = ChatMessage(session_id=session.id, role="user", content=user_content)
+    db.add(user_message)
     db.commit()
 
-    scored_chunks = retrieve(db, session.course_id, user_content)
+    understanding = understand_query(provider, prior_history, user_content)
+    db.add(
+        QueryTurn(
+            message_id=user_message.id,
+            intent=understanding.intent,
+            rewritten_query=understanding.rewritten_query,
+        )
+    )
+    db.commit()
+
+    # ADR 003: retrieval runs on the rewritten query when one exists,
+    # original content in chat_messages.content is never touched.
+    scored_chunks = retrieve(db, session.course_id, understanding.retrieval_query)
+    for rank, scored in enumerate(scored_chunks, start=1):
+        db.add(RetrievedChunk(message_id=user_message.id, chunk_id=scored.chunk.id, rank=rank))
+    db.commit()
+
     system_prompt, marker_map = build_system_prompt(course.name, scored_chunks)
-    history = _history_messages(db, session.id)
+    # Compaction-aware history (ADR 004) -- includes the user message just
+    # committed above, in its original (not rewritten) wording; the
+    # rewrite only ever affects which chunks retrieve() found.
+    history = get_working_history(db, session, provider)
 
     full_text = ""
     for delta in provider.generate_stream(history, system=system_prompt):
@@ -66,4 +92,8 @@ def stream_assistant_reply(
         )
 
     db.commit()
-    yield "done", {"message_id": assistant_message.id, "citations": [asdict(c) for c in citations]}
+    yield "done", {
+        "message_id": assistant_message.id,
+        "citations": [asdict(c) for c in citations],
+        "rewritten_query": understanding.rewritten_query,
+    }

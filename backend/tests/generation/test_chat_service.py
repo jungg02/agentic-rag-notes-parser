@@ -1,10 +1,13 @@
+import json
 from typing import Iterator
+
+from sqlalchemy import select
 
 from app.generation.chat_service import stream_assistant_reply
 from app.generation.prompts import build_system_prompt, parse_citations
 from app.ingestion.embedder import embed_texts
-from app.models import ChatSession, Chunk, Course, Document
-from app.providers.base import LLMMessage
+from app.models import ChatSession, Chunk, Course, Document, QueryTurn, RetrievedChunk
+from app.providers.base import LLMMessage, LLMResponse
 
 
 class FakeProvider:
@@ -12,7 +15,11 @@ class FakeProvider:
         self._reply_text = reply_text
 
     def generate(self, messages, system=None, max_tokens=2048):
-        raise NotImplementedError
+        # Stands in for the query-understanding call chat_service now makes
+        # before retrieval -- always reports a standalone query so these
+        # tests keep exercising the original single-turn retrieve() path.
+        payload = json.dumps({"intent": "factual_lookup", "needs_rewrite": False, "standalone_query": None})
+        return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
 
     def generate_stream(self, messages: list[LLMMessage], system=None, max_tokens=2048) -> Iterator[str]:
         for word in self._reply_text.split(" "):
@@ -44,6 +51,139 @@ def _seed(db_session):
     db_session.add(session)
     db_session.commit()
     return session, chunk
+
+
+class ScriptedProvider:
+    """Pops one understanding reply and one answer per stream_assistant_reply
+    call, in order, so a multi-turn test can script a different rewrite/
+    answer for each turn."""
+
+    def __init__(self, understanding_replies: list[str], answer_replies: list[str]):
+        self._understanding_replies = list(understanding_replies)
+        self._answer_replies = list(answer_replies)
+
+    def generate(self, messages, system=None, max_tokens=2048):
+        payload = self._understanding_replies.pop(0)
+        return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
+
+    def generate_stream(self, messages, system=None, max_tokens=2048) -> Iterator[str]:
+        for word in self._answer_replies.pop(0).split(" "):
+            yield word + " "
+
+
+def _seed_two_topics(db_session):
+    course = Course(name="Cell Biology")
+    db_session.add(course)
+    db_session.flush()
+    document = Document(
+        course_id=course.id, original_filename="lecture1.pdf", original_format="pdf",
+        original_path="/tmp/lecture1.pdf", file_sha256="e" * 64,
+    )
+    db_session.add(document)
+    db_session.flush()
+
+    texts = [
+        "Mitochondria produce ATP through cellular respiration in the cell.",
+        "Photosynthesis in chloroplasts converts sunlight into chemical energy using chlorophyll.",
+    ]
+    vectors = embed_texts(texts)
+    mito_chunk = Chunk(
+        document_id=document.id, course_id=course.id, chunk_index=0, text=texts[0],
+        page_number=1, bboxes={"page_width": 612.0, "page_height": 792.0, "rects": []},
+        token_count=10, embedding=vectors[0],
+    )
+    photo_chunk = Chunk(
+        document_id=document.id, course_id=course.id, chunk_index=1, text=texts[1],
+        page_number=2, bboxes={"page_width": 612.0, "page_height": 792.0, "rects": []},
+        token_count=10, embedding=vectors[1],
+    )
+    db_session.add_all([mito_chunk, photo_chunk])
+    db_session.flush()
+
+    session = ChatSession(course_id=course.id)
+    db_session.add(session)
+    db_session.commit()
+    return session, mito_chunk, photo_chunk
+
+
+def test_stream_assistant_reply_persists_query_turn_and_retrieved_chunks(db_session):
+    session, chunk = _seed(db_session)
+    provider = FakeProvider("Mitochondria produce ATP [1].")
+
+    list(stream_assistant_reply(db_session, session, "What produces ATP?", provider))
+
+    query_turn = db_session.scalars(select(QueryTurn)).one()
+    assert query_turn.intent == "factual_lookup"
+    assert query_turn.rewritten_query is None
+
+    retrieved = db_session.scalars(select(RetrievedChunk)).all()
+    assert len(retrieved) >= 1
+    assert retrieved[0].chunk_id == chunk.id
+    assert retrieved[0].rank == 1
+
+
+def test_multiturn_conversation_with_pronoun_reference_retrieves_correct_chunk(db_session):
+    """Phase 1 acceptance criterion: a 3+ turn conversation with pronoun
+    references retrieves correctly. Turn 2's "that" and turn 3's "the other
+    one" only resolve via query understanding's rewrite -- if retrieval ran
+    on the raw pronoun-laden text instead, it would have nothing distinctive
+    to match against and could easily land on the wrong chunk."""
+    session, mito_chunk, photo_chunk = _seed_two_topics(db_session)
+
+    understanding_replies = [
+        json.dumps({"intent": "factual_lookup", "needs_rewrite": False, "standalone_query": None}),
+        json.dumps(
+            {
+                "intent": "follow_up",
+                "needs_rewrite": True,
+                "standalone_query": "Which organelle does ATP production happen in?",
+            }
+        ),
+        json.dumps(
+            {
+                "intent": "follow_up",
+                "needs_rewrite": True,
+                "standalone_query": "How does photosynthesis in chloroplasts work?",
+            }
+        ),
+    ]
+    answer_replies = [
+        "Mitochondria produce ATP [1].",
+        "It happens in the mitochondria [1].",
+        "Photosynthesis converts sunlight into chemical energy [1].",
+    ]
+    provider = ScriptedProvider(understanding_replies, answer_replies)
+
+    turn1 = list(stream_assistant_reply(db_session, session, "What produces ATP in a cell?", provider))
+    turn2 = list(stream_assistant_reply(db_session, session, "Which organelle does that happen in?", provider))
+    turn3 = list(stream_assistant_reply(db_session, session, "How does the other one work?", provider))
+
+    turn1_citations = [e for e in turn1 if e[0] == "done"][0][1]["citations"]
+    turn2_citations = [e for e in turn2 if e[0] == "done"][0][1]["citations"]
+    turn3_citations = [e for e in turn3 if e[0] == "done"][0][1]["citations"]
+
+    assert turn1_citations[0]["chunk_id"] == mito_chunk.id
+    assert turn2_citations[0]["chunk_id"] == mito_chunk.id  # "that" resolved correctly
+    assert turn3_citations[0]["chunk_id"] == photo_chunk.id  # "the other one" resolved correctly
+
+    query_turns = db_session.scalars(select(QueryTurn).order_by(QueryTurn.id)).all()
+    assert query_turns[1].rewritten_query == "Which organelle does ATP production happen in?"
+    assert query_turns[2].rewritten_query == "How does photosynthesis in chloroplasts work?"
+
+
+def test_done_event_includes_rewritten_query_when_present(db_session):
+    session, mito_chunk, photo_chunk = _seed_two_topics(db_session)
+    understanding_replies = [
+        json.dumps(
+            {"intent": "follow_up", "needs_rewrite": True, "standalone_query": "What produces ATP in a cell?"}
+        )
+    ]
+    provider = ScriptedProvider(understanding_replies, ["Mitochondria produce ATP [1]."])
+
+    events = list(stream_assistant_reply(db_session, session, "What does that do?", provider))
+    done_data = [e for e in events if e[0] == "done"][0][1]
+
+    assert done_data["rewritten_query"] == "What produces ATP in a cell?"
 
 
 def test_parse_citations_extracts_valid_distinct_markers():
