@@ -543,6 +543,109 @@ for the full design rationale.
 Full backend test suite: 153 passed, 1 pre-existing unrelated failure
 (see Phase 0 section), 1 skipped.
 
+## Phase 4: multimodal retrieval
+
+Extends the corpus beyond text: extracts embedded figures (charts,
+diagrams, illustrations) from ingested PDFs, embeds them with SigLIP
+(`google/siglip-base-patch16-224`), and searches them independently of
+chunk retrieval so a question can surface a relevant diagram alongside —
+never instead of — its cited text answer. Scoped to the plan's 5 core
+tasks (figure extraction, image embeddings, cross-modal retrieval,
+caption enrichment, serving figures with provenance); the two stretch
+tasks (video/keyframes, a trained projection head) were never attempted —
+see the honest-limitations note below.
+
+**Design decisions** (4 surfaced and confirmed before implementation):
+- **[ADR 011](docs/adr/011-image-embedding-model.md):** SigLIP over CLIP — picked on
+  merit (generally better zero-shot accuracy at comparable size), no
+  switching cost since nothing in this app used CLIP already.
+- **[ADR 012](docs/adr/012-figure-index-design.md):** a separate `figures` table
+  with its own SigLIP embedding column, entirely independent of `chunks`
+  (bge-small text embeddings) — protects the retrieval quality Phase 3
+  already measured from any risk of a shared-embedding-space regression.
+  Confirmed, not just argued: re-running `phase3_retrieval_ablation.py`
+  after this build's corpus was re-ingested twice still reproduces the
+  reranked row's 82.3%/0.698/0.740 exactly.
+- **[ADR 013](docs/adr/013-cross-modal-surfacing.md):** figures are searched every
+  turn and returned as a separate `related_figures` list, never merged
+  into the citation-numbered excerpt block or RRF'd against chunk scores
+  — chunk-rerank scores and SigLIP cosine similarities aren't the same
+  kind of number. Same additive pattern as Phase 2's memory retrieval.
+- **[ADR 014](docs/adr/014-captionless-figures.md):** a figure is retrievable via
+  image embedding alone the moment it's extracted; captions (when they
+  exist) only add lexical-arm presence, never gate retrievability.
+
+**Figure extraction** (`app/ingestion/figures.py`) reuses the PyMuPDF
+page-access primitives `ocr.py` already uses, with two empirically-calibrated
+filters: images under 100px on their shorter side are dropped (PDFs
+exported from PowerPoint can embed hundreds of tiny decorative mask/
+gradient fragments that PyMuPDF reports as ordinary images — this
+threshold was calibrated directly against this app's own corpus, see the
+module docstring), and images covering ≥90% of the page are dropped too —
+found directly in this app's own OCR test fixtures, where a scanned page
+embeds the *entire page* as one image, which would otherwise get indexed
+as a "figure."
+
+**Caption generation (task 4) was evaluated and deferred, not silently
+skipped.** Probed directly against the configured provider: a
+chat-completion call with an `image_url` content part returns
+`BadRequestError: "... is not a multimodal model"` in ~1s — a clean
+capability gap, not the endpoint's usual latency flakiness. Wiring up
+real vision captioning would mean extending `LLMProvider`/`LLMMessage` to
+carry image content across both provider implementations, for a feature
+ADR 014 already scoped as optional and the current model can't serve
+anyway. `figures.caption`/`caption_tsv` are real, queryable columns —
+just empty this build.
+
+**Acceptance criteria:**
+- Text query retrieves relevant figures — **44.4% recall@3** on a
+  9-item hand-verified eval set (every item's grounding was determined by
+  extracting the real figure from the real corpus and visually inspecting
+  it before writing the query — see `scripts/eval/phase4_figure_queries.json`).
+  Genuinely modest, not inflated: most misses were near-misses on a
+  topically-adjacent figure in the same narrow, single-course-illustration
+  corpus (e.g. a "how do joins match keys" query landing on a different,
+  also-correct join diagram than the one picked as ground truth) —
+  disclosed in full in the ablation output, not smoothed over.
+- Cross-modal results fused and ranked sensibly — `retrieve_figures()`
+  fuses a dense (SigLIP) arm with a lexical (caption) arm via the same
+  `reciprocal_rank_fusion()` chunks already use, scoped *within* the
+  figures arm only (ADR 013). Since captions are empty this build, fused
+  and dense-only results are identical by construction — reported side by
+  side rather than hidden, so a future caption pipeline's actual
+  contribution would show up as a diff in this same script's output.
+- Evaluated with the Phase 3 harness, not just demoed —
+  `bench/phase4_figure_ablation.py` reuses `bench/phase3_metrics.py`'s
+  exact recall@k/mrr@k/nDCG@10 functions, zero new metric code.
+- Honest note on what is and isn't demonstrated — required below.
+
+**Latency, disclosed the same way Phase 2 disclosed its embed cost:**
+`stream_assistant_reply` runs `embed_image_query()` (a SigLIP text-tower
+forward pass) plus `retrieve_figures()` on every turn, unconditionally —
+same additive-always-search pattern as memory retrieval. Measured
+steady-state (warm model, matching how `baseline.py`/`phase2_*`/
+`phase3_*` all measure — the first unwarmed run mixed in one-time SigLIP
+model load and reported a misleading ~950ms): **215.2ms mean** per query
+(embed + dense + lexical fusion), roughly **3x** memory retrieval's own
+~76ms p95 total-added-latency figure. Unlike memory retrieval this isn't
+budgeted against a stated target in the plan, but it's real added
+per-turn cost worth being direct about rather than omitting.
+
+**What this is not:** static figure retrieval is not video understanding
+— no keyframe sampling, no temporal aggregation, no video input was
+built (Phase 4's own stretch task 6, never attempted). Using a pretrained
+SigLIP checkpoint as a frozen encoder is not representation learning —
+no projection head or adapter was trained on this app's own data (stretch
+task 7, also never attempted); every embedding here is exactly what
+`google/siglip-base-patch16-224` produces out of the box. Both were
+explicitly scoped as stretch goals in the plan ("do this if there's any
+time at all") and neither was started.
+
+Reproduce: `docker compose run --rm backend python bench/phase4_figure_ablation.py`.
+
+Full backend test suite: 184 passed, 1 pre-existing unrelated failure
+(see Phase 0 section), 1 skipped.
+
 ## Roadmap
 
 - **Phase 1 (this build):** course CRUD, ingestion, hybrid retrieval + RRF +

@@ -278,3 +278,22 @@ individual stages, `query/understanding.py`, `memory/retrieval.py`,
 paths. Design rationale in `docs/adr/010-phase3-eval-design.md`; results and
 methodology in `backend/bench/results/ablation.md` and the README's Phase 3
 section.
+
+## Phase 4: multimodal retrieval
+
+Adds `app/ingestion/{figures,image_embedder}.py` (figure extraction via
+PyMuPDF + SigLIP embedding) and a new `figures` table (course-scoped,
+independent embedding space and index from `chunks` — ADR 012). Ingestion
+gains a step after chunk embedding that extracts, embeds, and persists a
+document's figures; it can fail without failing the document (ADR 014,
+same graceful-degradation shape as OCR). `app/retrieval/figures.py`
+mirrors the chunks retrieval module's shape (a dense arm and a lexical
+arm, fused with the same `reciprocal_rank_fusion()`) but is invoked
+independently in `chat_service.py` — figures are never part of the
+system prompt the query-flow diagram's `<excerpts>` block describes, and
+never merged into the diagram's retrieval step at all (ADR 013); they
+attach to the response as a separate `related_figures` list the frontend
+renders alongside, not inside, the assistant's message. Design decisions
+in `docs/adr/011-014-*.md`; acceptance-criteria results, the honest
+recall number, and what's explicitly not demonstrated (video, trained
+representations) are in the README's Phase 4 section.
