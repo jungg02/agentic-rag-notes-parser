@@ -1,0 +1,15 @@
+{
+  "course_id": 1,
+  "questions": [
+    {
+      "question": "What is the time complexity of quicksort's average case?",
+      "expected_document": "Lecture4_Sorting.pdf",
+      "expected_pages": [12, 13]
+    },
+    {
+      "question": "What does the mitochondria do?",
+      "expected_document": "sample.pdf",
+      "expected_pages": [1]
+    }
+  ]
+}

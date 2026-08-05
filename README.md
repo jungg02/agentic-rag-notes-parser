@@ -279,6 +279,47 @@ docs/
   superpowers/plans/    # implementation plan
 ```
 
+## Baseline (Phase 0 of the retrieval upgrade plan)
+
+Full audit — module map, request-flow diagrams, honest weaknesses — lives in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Reproduce the numbers below
+with `docker compose run --rm backend python bench/baseline.py --course-id 4
+--seed 0`; run the retrieval-quality eval (Recall@k/MRR@k across
+lexical/vector/fused/reranked) with `backend/scripts/eval_retrieval.py`.
+Pin `--course-id`/`--seed` — without them the benchmark picks whichever
+course currently has the most chunks, which isn't reproducible as the corpus
+grows.
+
+Measured 2026-08-04 (`backend/bench/results/baseline.json`) against course 4
+(401 chunks — real ingested course material, not synthetic fixtures; this is
+the actual working set queried, since `search_lexical`/`search_vector` are
+course-scoped). The dev DB's global corpus across all courses was 26
+documents / 839 chunks at measurement time:
+
+| Stage | mean | p50 | p95 | p99 |
+|---|---|---|---|---|
+| lexical (Postgres FTS) | 1.4ms | 1.1ms | 2.8ms | 4.3ms |
+| embed (query encoding) | 34.5ms | 29.7ms | 72.8ms | 85.9ms |
+| vector (pgvector ANN search) | 1.3ms | 1.2ms | 1.9ms | 2.0ms |
+| fusion (RRF) | <0.1ms | <0.1ms | 0.1ms | 0.1ms |
+| hydrate (candidate fetch) | 3.1ms | 2.6ms | 4.7ms | 10.0ms |
+| rerank (cross-encoder) | 530.1ms | 468.0ms | 891.3ms | 1037.2ms |
+| **end-to-end** | **576.4ms** | **511.0ms** | **966.7ms** | **1026.7ms** |
+
+**Reranking dominates end-to-end latency by nearly an order of magnitude**
+over every other stage combined — it's ~92% of mean end-to-end time,
+scoring up to 20 real-length note chunks per query through a cross-encoder
+on CPU. Everything upstream of it (lexical, embed, vector, fusion, hydrate)
+totals well under 50ms even at p99. This is the single most useful number
+in this baseline: any future retrieval-quality work (query rewriting,
+memory injection, multimodal fusion — Phases 1, 2, 4 of the plan) adds cost
+on top of a pipeline that is already reranker-bound, so reranker
+latency/throughput is the first thing worth profiling before adding more
+stages in front of it. Known weaknesses (broken test-DB fixture blocking
+29/60 backend tests on a fresh clone, a silent embedding-truncation gap
+above ~512 tokens, dead code, duplicated retrieval logic in the debug
+endpoint) are catalogued in `docs/ARCHITECTURE.md`.
+
 ## Roadmap
 
 - **Phase 1 (this build):** course CRUD, ingestion, hybrid retrieval + RRF +
