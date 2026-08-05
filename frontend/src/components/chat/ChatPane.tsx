@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { useQueryClient } from "@tanstack/react-query";
 
-import type { ChatMessage } from "../../api/chat";
+import type { ChatMessage, RelatedFigure } from "../../api/chat";
 import {
   sendMessageStream,
   useChatMessages,
@@ -17,9 +17,10 @@ import { MessageList } from "./MessageList";
 interface ChatPaneProps {
   courseId: number;
   onOpenSource: (chunkId: number) => void;
+  onOpenFigure: (figure: RelatedFigure) => void;
 }
 
-export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
+export function ChatPane({ courseId, onOpenSource, onOpenFigure }: ChatPaneProps) {
   const { data: sessions } = useChatSessions(courseId);
   const createSession = useCreateChatSession(courseId);
   const deleteSession = useDeleteChatSession(courseId);
@@ -27,6 +28,11 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
   const { data: persistedMessages } = useChatMessages(sessionId);
   const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  // Related figures aren't persisted server-side (see ADR 013/README Phase
+  // 4 -- they're a best-effort retrieval surface, not a durable citation),
+  // so they only exist for turns generated in this browser session; keyed
+  // by real message_id once "done" arrives (never by the -2 draft id).
+  const [relatedFiguresByMessageId, setRelatedFiguresByMessageId] = useState<Record<number, RelatedFigure[]>>({});
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -88,6 +94,7 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
             { ...assistant, id: data.message_id, citations: data.citations },
           ];
         });
+        setRelatedFiguresByMessageId((prev) => ({ ...prev, [data.message_id]: data.related_figures }));
         queryClient.invalidateQueries({ queryKey: ["chat-messages", sessionId] });
         setIsSending(false);
       }
@@ -116,7 +123,12 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
           Clear chat
         </button>
       </div>
-      <MessageList messages={allMessages} onOpenSource={onOpenSource} />
+      <MessageList
+        messages={allMessages}
+        onOpenSource={onOpenSource}
+        relatedFiguresByMessageId={relatedFiguresByMessageId}
+        onOpenFigure={onOpenFigure}
+      />
       <ChatInput onSend={handleSend} disabled={isSending} />
     </div>
   );

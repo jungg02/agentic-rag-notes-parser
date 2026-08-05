@@ -48,7 +48,7 @@ describe("ChatPane clear chat", () => {
   });
 
   it("deletes the session and returns to the start-chat prompt when Clear chat is clicked", async () => {
-    renderWithClient(<ChatPane courseId={1} onOpenSource={() => {}} />);
+    renderWithClient(<ChatPane courseId={1} onOpenSource={() => {}} onOpenFigure={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Hi there")).toBeInTheDocument());
 

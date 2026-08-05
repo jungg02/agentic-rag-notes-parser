@@ -10,6 +10,13 @@ export interface Citation {
   page_number: number;
 }
 
+export interface RelatedFigure {
+  figure_id: number;
+  document_id: number;
+  filename: string;
+  page_number: number;
+}
+
 export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -66,7 +73,12 @@ export async function sendMessageStream(
   sessionId: number,
   content: string,
   onDelta: (text: string) => void,
-  onDone: (data: { message_id: number; citations: Citation[]; rewritten_query: string | null }) => void
+  onDone: (data: {
+    message_id: number;
+    citations: Citation[];
+    rewritten_query: string | null;
+    related_figures: RelatedFigure[];
+  }) => void
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/messages`, {
     method: "POST",

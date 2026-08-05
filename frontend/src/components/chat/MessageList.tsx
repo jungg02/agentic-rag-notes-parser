@@ -1,12 +1,15 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import type { ChatMessage } from "../../api/chat";
+import type { ChatMessage, RelatedFigure } from "../../api/chat";
 import { CitationChip } from "./CitationChip";
 import "./MessageList.css";
+import { RelatedFigures } from "./RelatedFigures";
 
 interface MessageListProps {
   messages: ChatMessage[];
   onOpenSource: (chunkId: number) => void;
+  relatedFiguresByMessageId: Record<number, RelatedFigure[]>;
+  onOpenFigure: (figure: RelatedFigure) => void;
 }
 
 const NEAR_BOTTOM_THRESHOLD_PX = 80;
@@ -28,7 +31,7 @@ function renderContentWithCitations(message: ChatMessage, onOpenSource: (chunkId
   });
 }
 
-export function MessageList({ messages, onOpenSource }: MessageListProps) {
+export function MessageList({ messages, onOpenSource, relatedFiguresByMessageId, onOpenFigure }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
@@ -60,6 +63,9 @@ export function MessageList({ messages, onOpenSource }: MessageListProps) {
           {renderContentWithCitations(message, onOpenSource)}
           {message.rewritten_query && message.rewritten_query !== message.content && (
             <div className="message-rewritten-query">Interpreted as: "{message.rewritten_query}"</div>
+          )}
+          {message.role === "assistant" && (
+            <RelatedFigures figures={relatedFiguresByMessageId[message.id] ?? []} onOpenFigure={onOpenFigure} />
           )}
         </div>
       ))}

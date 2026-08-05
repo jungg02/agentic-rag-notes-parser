@@ -6,13 +6,15 @@ import { ChatPane } from "./components/chat/ChatPane";
 import { CourseSelector } from "./components/courses/CourseSelector";
 import { DocumentList } from "./components/documents/DocumentList";
 import { UploadDropzone } from "./components/documents/UploadDropzone";
+import type { SourceTarget } from "./components/source-panel/SourcePanel";
 import { SourcePanel } from "./components/source-panel/SourcePanel";
+import type { RelatedFigure } from "./api/chat";
 
 const queryClient = new QueryClient();
 
 export default function App() {
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
-  const [openChunkId, setOpenChunkId] = useState<number | null>(null);
+  const [sourceTarget, setSourceTarget] = useState<SourceTarget>(null);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -34,7 +36,19 @@ export default function App() {
                 <DocumentList courseId={selectedCourseId} />
               </div>
               <div className="app-column-chat">
-                <ChatPane key={selectedCourseId} courseId={selectedCourseId} onOpenSource={setOpenChunkId} />
+                <ChatPane
+                  key={selectedCourseId}
+                  courseId={selectedCourseId}
+                  onOpenSource={(chunkId) => setSourceTarget({ kind: "chunk", chunkId })}
+                  onOpenFigure={(figure: RelatedFigure) =>
+                    setSourceTarget({
+                      kind: "figure",
+                      documentId: figure.document_id,
+                      pageNumber: figure.page_number,
+                      filename: figure.filename,
+                    })
+                  }
+                />
               </div>
             </div>
           ) : (
@@ -44,7 +58,7 @@ export default function App() {
             </div>
           )}
         </main>
-        <SourcePanel chunkId={openChunkId} onClose={() => setOpenChunkId(null)} />
+        <SourcePanel target={sourceTarget} onClose={() => setSourceTarget(null)} />
       </div>
     </QueryClientProvider>
   );

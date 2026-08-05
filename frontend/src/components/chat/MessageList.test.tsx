@@ -1,8 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChatMessage } from "../../api/chat";
+import type { ChatMessage, RelatedFigure } from "../../api/chat";
 import { MessageList } from "./MessageList";
+
+const noFigures: Record<number, RelatedFigure[]> = {};
+const noopOpenFigure = () => {};
 
 function setLayout(
   el: HTMLElement,
@@ -45,7 +48,7 @@ describe("MessageList", () => {
       },
     ];
 
-    render(<MessageList messages={messages} onOpenSource={onOpenSource} />);
+    render(<MessageList messages={messages} onOpenSource={onOpenSource} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
 
     expect(screen.getByText("Mitochondria produce ATP", { exact: false })).toBeInTheDocument();
     const chip = screen.getByText("[1]");
@@ -64,7 +67,7 @@ describe("MessageList", () => {
         rewritten_query: null,
       },
     ];
-    render(<MessageList messages={messages} onOpenSource={() => {}} />);
+    render(<MessageList messages={messages} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
     expect(screen.getByText("[9]", { exact: false })).toBeInTheDocument();
   });
 
@@ -79,7 +82,7 @@ describe("MessageList", () => {
         rewritten_query: "Does BM25 or dense retrieval handle typos better?",
       },
     ];
-    render(<MessageList messages={messages} onOpenSource={() => {}} />);
+    render(<MessageList messages={messages} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
     expect(screen.getByText(/Does BM25 or dense retrieval handle typos better\?/)).toBeInTheDocument();
   });
 
@@ -94,32 +97,75 @@ describe("MessageList", () => {
         rewritten_query: null,
       },
     ];
-    render(<MessageList messages={messages} onOpenSource={() => {}} />);
+    render(<MessageList messages={messages} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
     expect(screen.queryByText(/Interpreted as/)).not.toBeInTheDocument();
+  });
+
+  it("renders related figures for an assistant message and opens one on click", () => {
+    const onOpenFigure = vi.fn();
+    const messages: ChatMessage[] = [
+      {
+        id: 7,
+        role: "assistant",
+        content: "The skip argument tells R to skip rows.",
+        created_at: "2026-01-01T00:00:00Z",
+        citations: [],
+        rewritten_query: null,
+      },
+    ];
+    const figures: Record<number, RelatedFigure[]> = {
+      7: [{ figure_id: 42, document_id: 3, filename: "Week3_slides.pdf", page_number: 31 }],
+    };
+
+    render(
+      <MessageList messages={messages} onOpenSource={() => {}} relatedFiguresByMessageId={figures} onOpenFigure={onOpenFigure} />
+    );
+
+    const thumb = screen.getByTitle("Week3_slides.pdf, page 31");
+    thumb.click();
+    expect(onOpenFigure).toHaveBeenCalledWith(figures[7][0]);
+  });
+
+  it("does not render a related-figures row for a user message even if present in the map", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 8,
+        role: "user",
+        content: "What does skip do?",
+        created_at: "2026-01-01T00:00:00Z",
+        citations: [],
+        rewritten_query: null,
+      },
+    ];
+    const figures: Record<number, RelatedFigure[]> = {
+      8: [{ figure_id: 42, document_id: 3, filename: "Week3_slides.pdf", page_number: 31 }],
+    };
+    render(<MessageList messages={messages} onOpenSource={() => {}} relatedFiguresByMessageId={figures} onOpenFigure={() => {}} />);
+    expect(screen.queryByTitle("Week3_slides.pdf, page 31")).not.toBeInTheDocument();
   });
 });
 
 describe("MessageList autoscroll", () => {
   it("scrolls to bottom when a new message arrives while near the bottom", () => {
-    const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} />);
+    const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
     const listEl = container.querySelector(".message-list") as HTMLElement;
     setLayout(listEl, { scrollHeight: 500, scrollTop: 450, clientHeight: 100 });
     fireEvent.scroll(listEl);
     scrollIntoViewMock.mockClear();
 
-    rerender(<MessageList messages={makeMessages(2)} onOpenSource={() => {}} />);
+    rerender(<MessageList messages={makeMessages(2)} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
 
     expect(scrollIntoViewMock).toHaveBeenCalled();
   });
 
   it("does not scroll when the user has scrolled up away from the bottom", () => {
-    const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} />);
+    const { container, rerender } = render(<MessageList messages={makeMessages(1)} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
     const listEl = container.querySelector(".message-list") as HTMLElement;
     setLayout(listEl, { scrollHeight: 1000, scrollTop: 0, clientHeight: 200 });
     fireEvent.scroll(listEl);
     scrollIntoViewMock.mockClear();
 
-    rerender(<MessageList messages={makeMessages(2)} onOpenSource={() => {}} />);
+    rerender(<MessageList messages={makeMessages(2)} onOpenSource={() => {}} relatedFiguresByMessageId={noFigures} onOpenFigure={noopOpenFigure} />);
 
     expect(scrollIntoViewMock).not.toHaveBeenCalled();
   });

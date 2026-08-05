@@ -48,21 +48,28 @@ describe("SourcePanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders nothing when chunkId is null", () => {
-    const { container } = renderWithClient(<SourcePanel chunkId={null} onClose={() => {}} />);
+  it("renders nothing when target is null", () => {
+    const { container } = renderWithClient(<SourcePanel target={null} onClose={() => {}} />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("fetches and displays the filename and page number", async () => {
-    renderWithClient(<SourcePanel chunkId={5} onClose={() => {}} />);
+  it("fetches and displays the filename and page number for a chunk target", async () => {
+    renderWithClient(<SourcePanel target={{ kind: "chunk", chunkId: 5 }} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText("notes.pdf — page 3")).toBeInTheDocument());
   });
 
   it("calls onClose when the close button is clicked", async () => {
     const onClose = vi.fn();
-    renderWithClient(<SourcePanel chunkId={5} onClose={onClose} />);
+    renderWithClient(<SourcePanel target={{ kind: "chunk", chunkId: 5 }} onClose={onClose} />);
     await waitFor(() => screen.getByLabelText("Close source panel"));
     screen.getByLabelText("Close source panel").click();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("displays the filename and page number for a figure target without fetching a chunk", () => {
+    renderWithClient(
+      <SourcePanel target={{ kind: "figure", documentId: 2, pageNumber: 7, filename: "slides.pdf" }} onClose={() => {}} />
+    );
+    expect(screen.getByText("slides.pdf — page 7")).toBeInTheDocument();
   });
 });
