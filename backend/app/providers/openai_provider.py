@@ -6,8 +6,24 @@ from app.providers.base import AuthError, LLMMessage, LLMProvider, LLMProviderEr
 
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str, base_url: str | None = None):
-        self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ):
+        # timeout/max_retries are None by default (SDK defaults: effectively
+        # unbounded timeout, 2 retries) -- the app itself relies on that for
+        # normal chat use. Phase 3's eval harness passes both explicitly
+        # (timeout bounded, max_retries=0) so one stalled call against a
+        # flaky endpoint can't hang the run for timeout*(retries+1) instead
+        # of just timeout (see bench/phase3_llm_collect.py).
+        kwargs = {}
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+        self._client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, **kwargs)
         self._model = model
 
     def _to_openai_messages(self, messages: list[LLMMessage], system: str | None) -> list[dict]:
