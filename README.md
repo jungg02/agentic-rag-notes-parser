@@ -483,6 +483,66 @@ debugging and demoing.
 Full backend test suite: 131 passed, 1 pre-existing unrelated failure (see
 Phase 0 section), 1 skipped.
 
+## Phase 3: evaluation harness
+
+Proves whether Phases 1 and 2 actually improved retrieval, rather than
+just adding features. A 62-item hand-authored test set against real
+DSA2101 course data (an R/data-science course), covering 5 categories:
+single-turn factual, multi-turn coreference, comparison, topic switch,
+and cross-session memory. Every item's grounding (which document/page
+should be retrieved) was determined by reading the actual source chunk
+and writing a question from it — not LLM-generated and spot-checked, so
+grounding is exact by construction rather than probably-correct.
+
+Full methodology, per-category tables, and the honest weaknesses section
+this phase's acceptance criteria require: **[bench/results/ablation.md](backend/bench/results/ablation.md)**.
+Headline results:
+
+- **Retrieval mechanism** (lexical / vector / fused / fused+rerank):
+  reranked wins clearly — **82.3% recall@6** vs. lexical's 33.9%,
+  validating the hybrid+rerank design from the original build.
+- **Query rewriting (the plan's headline number):** recall@6 on
+  multi-turn coreference queries improved from **66.7% to 75.0%** with
+  rewriting on. Topic-switch queries (already standalone by construction)
+  showed exact parity, 90.0% either way — rewriting helps where needed and
+  does no harm where it isn't.
+- **Semantic memory:** measured against a real baseline, not a definitional
+  zero — the judge was also asked to score personalization for the
+  memory-blind answers, given the same fact only as a grading criterion.
+  Result: 2/6 with-memory answers judged personalized vs. 2/4 for the
+  memory-blind baseline. At n=8 this doesn't support a directional claim
+  either way (see the ablation report's honest-weaknesses section for why)
+  — the useful finding here is that the harness can measure this at all,
+  not that memory helped in this run.
+- **LLM-as-judge calibration:** 90.0% agreement on faithfulness, 95.0% on
+  citation correctness, against 20 answers I hand-labeled myself. Both
+  disagreements were the same failure pattern — an answer citing a real
+  excerpt for a claim the excerpt doesn't actually support (correct
+  outside knowledge dressed up as sourced) — including one of the 8
+  with-memory answers, so that arm's judge-reported 100% faithful is a
+  known overestimate; ablation.md §3 has the correction.
+
+Built as a small pipeline of scripts under `backend/bench/phase3_*.py`,
+one command runs the whole thing:
+
+```bash
+docker compose run --rm backend python bench/phase3_eval.py
+```
+
+Collection of live-LLM results (rewrites, generated answers, judge
+verdicts) is cached to a resumable JSONL file
+(`bench/results/phase3_llm_cache.jsonl`) and run separately from
+computing metrics, specifically because the configured NVIDIA NIM
+endpoint was observed taking anywhere from ~1s to 381s for a single call
+during this build — collection needed to survive that without hanging or
+silently discarding slow-but-legitimate results. `phase3_eval.py
+--skip-collect` reruns the (fast, zero-LLM) ablation and report steps
+against an existing cache. See [ADR 010](docs/adr/010-phase3-eval-design.md)
+for the full design rationale.
+
+Full backend test suite: 153 passed, 1 pre-existing unrelated failure
+(see Phase 0 section), 1 skipped.
+
 ## Roadmap
 
 - **Phase 1 (this build):** course CRUD, ingestion, hybrid retrieval + RRF +

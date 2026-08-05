@@ -262,7 +262,19 @@ memories are never citable, see ADR 005). Retrieval happens in
 `<student_context>` block in `build_system_prompt`'s output rather than the
 `<excerpts>` block the query-flow diagram shows. Extraction is not part of
 the request-response query flow at all: it's triggered opportunistically
-from `routers/chat.py`'s session create/list endpoints (ADR 008), so it
-doesn't belong on the diagram above either. Design decisions in
-`docs/adr/005-009-*.md`; acceptance-criteria results and the memory-retrieval
-latency number are in the README's Phase 2 section.
+from `routers/chat.py`'s session-create endpoint, capped at one attempt per
+call (ADR 008), so it doesn't belong on the diagram above either. Design
+decisions in `docs/adr/005-009-*.md`; acceptance-criteria results and the
+memory-retrieval latency number are in the README's Phase 2 section.
+
+## Phase 3: evaluation harness
+
+Doesn't touch the request/response system at all — it's an offline
+measurement layer living entirely under `backend/bench/phase3_*.py` plus a
+hand-authored test set at `backend/scripts/eval/phase3_queries.json`.
+Reads the same modules the diagrams above describe (`retrieval/service.py`'s
+individual stages, `query/understanding.py`, `memory/retrieval.py`,
+`generation/prompts.py`) directly, rather than adding new production code
+paths. Design rationale in `docs/adr/010-phase3-eval-design.md`; results and
+methodology in `backend/bench/results/ablation.md` and the README's Phase 3
+section.

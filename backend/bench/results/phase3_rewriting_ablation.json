@@ -1,0 +1,30 @@
+{
+  "multi_turn_coreference": {
+    "raw": {
+      "recall_at_6": 0.6667,
+      "mrr_at_6": 0.5069,
+      "ndcg_at_10": 0.5468,
+      "n": 12
+    },
+    "rewritten": {
+      "recall_at_6": 0.75,
+      "mrr_at_6": 0.5861,
+      "ndcg_at_10": 0.6265,
+      "n": 12
+    }
+  },
+  "topic_switch": {
+    "raw": {
+      "recall_at_6": 0.9,
+      "mrr_at_6": 0.8,
+      "ndcg_at_10": 0.8563,
+      "n": 10
+    },
+    "rewritten": {
+      "recall_at_6": 0.9,
+      "mrr_at_6": 0.8,
+      "ndcg_at_10": 0.8563,
+      "n": 10
+    }
+  }
+}
