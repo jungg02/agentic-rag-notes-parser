@@ -12,13 +12,16 @@ from app.config import get_settings
 def test_engine():
     settings = get_settings()
     admin_engine = get_engine(settings.database_url.rsplit("/", 1)[0] + "/notes")
-    with admin_engine.connect() as conn:
-        conn.execute(text("COMMIT"))
+    # CREATE DATABASE cannot run inside a transaction block, and a literal
+    # "COMMIT" statement does not put a SQLAlchemy/psycopg3 connection into
+    # autocommit mode (the next statement autobegins a new transaction
+    # regardless) -- isolation_level="AUTOCOMMIT" is the actual fix. Root
+    # cause documented in docs/ARCHITECTURE.md.
+    with admin_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         exists = conn.execute(
             text("SELECT 1 FROM pg_database WHERE datname = 'notes_test'")
         ).first()
         if not exists:
-            conn.execute(text("COMMIT"))
             conn.execute(text("CREATE DATABASE notes_test"))
     admin_engine.dispose()
 

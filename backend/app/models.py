@@ -95,7 +95,17 @@ class ChatSession(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    # Rolling compaction state (ADR 004): `summary` covers every message up
+    # to and including `summarized_through_message_id`; messages after that
+    # id are still sent verbatim. Both null until compaction first triggers.
+    summary: Mapped[str | None] = mapped_column(Text)
+    summarized_through_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_messages.id", ondelete="SET NULL")
+    )
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", foreign_keys="ChatMessage.session_id"
+    )
 
 
 class ChatMessage(Base):
@@ -108,7 +118,7 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    session: Mapped["ChatSession"] = relationship(back_populates="messages")
+    session: Mapped["ChatSession"] = relationship(back_populates="messages", foreign_keys=[session_id])
     citations: Mapped[list["MessageCitation"]] = relationship(back_populates="message", cascade="all, delete-orphan")
 
 
@@ -122,4 +132,45 @@ class MessageCitation(Base):
     marker_index: Mapped[int] = mapped_column(Integer, nullable=False)
 
     message: Mapped["ChatMessage"] = relationship(back_populates="citations")
+    chunk: Mapped["Chunk"] = relationship()
+
+
+class QueryTurn(Base):
+    """Query-understanding output for one user turn (Phase 1 of the
+    retrieval upgrade plan). One row per user-role ChatMessage."""
+
+    __tablename__ = "query_turns"
+    __table_args__ = (
+        UniqueConstraint("message_id", name="uq_query_turn_message"),
+        CheckConstraint(
+            "intent IN ('factual_lookup','comparison','summarization','follow_up')", name="ck_query_turn_intent"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False)
+    intent: Mapped[str] = mapped_column(Text, nullable=False)
+    # Null when the query understanding step decided no rewrite was needed
+    # (query was already standalone) — the original is never discarded,
+    # it's just chat_messages.content for this same message_id.
+    rewritten_query: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    message: Mapped["ChatMessage"] = relationship()
+
+
+class RetrievedChunk(Base):
+    """Every chunk retrieve() returned for a turn, not just the ones the
+    model ended up citing (see MessageCitation for that subset) — needed to
+    score retrieval quality independent of generation quality in Phase 3."""
+
+    __tablename__ = "retrieved_chunks"
+    __table_args__ = (UniqueConstraint("message_id", "rank", name="uq_retrieved_chunk_message_rank"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False)
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    message: Mapped["ChatMessage"] = relationship()
     chunk: Mapped["Chunk"] = relationship()
