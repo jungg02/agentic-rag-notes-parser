@@ -361,22 +361,28 @@ the trustworthy numbers here):
 
 | | mean | p50 | p95 | p99 |
 |---|---|---|---|---|
-| query understanding (every turn) | 4897.4ms | 4027.7ms | 10086.3ms | 13025.9ms |
-| compaction summarization (only on trigger) | 5619.2ms | 4556.9ms | 10839.5ms | 12430.0ms |
+| query understanding (every turn) | 1363.6ms | 1344.2ms | 1593.0ms | 1630.4ms |
+| compaction summarization (only on trigger) | 4477.5ms | 3719.9ms | 8254.8ms | 9377.0ms |
 
-Both are **~8-10x Phase 0's entire end-to-end retrieval pipeline** (576ms
-mean) — each is one network round-trip, and a turn that both classifies
-*and* triggers compaction pays roughly both on top of retrieval, landing
-around **11 seconds** before the answer even starts streaming. They're this
-large specifically because the configured model (`openai/gpt-oss-20b` via
-NVIDIA NIM, per `.env`) is a reasoning model that spends ~400 hidden tokens
-"thinking" before emitting a ~30-word JSON reply or a short summary —
-confirmed by watching responses truncate under a smaller `max_tokens` during
-development (both `app/query/understanding.py` and `app/query/compaction.py`
-carry headroom for this, with comments). A non-reasoning model sized for
-these tasks (classification/rewrite/summarization, not deep reasoning) would
-very likely cut both dramatically; worth evaluating before this cost is
-treated as fixed — it's the single biggest lever on Phase 1's UX cost.
+Measured against `mistralai/mistral-nemotron` via NVIDIA NIM — a
+non-reasoning model. This confirms the earlier hypothesis from testing
+against `openai/gpt-oss-20b` (a reasoning model, ~400 hidden tokens spent
+"thinking" before a ~30-word JSON reply): understanding's cost dropped from
+~4.9s mean to **1.36s mean, ~2.4x Phase 0's retrieval baseline** instead of
+~8x. Compaction summarization is still notably slower (4.5s mean) since
+it's a genuinely bigger generation task (condensing several turns), not
+reasoning overhead — a turn that both classifies and triggers compaction
+still pays roughly both on top of the 576ms retrieval baseline, landing
+around **6.4s**, down from the ~11s measured against the reasoning model.
+
+Getting this number took several failed attempts against different models
+on the same NVIDIA NIM endpoint (`z-ai/glm-5.2` and `mistralai/mistral-medium-3.5-128b`
+both hung for 10-800+ seconds on trivial single-token requests — endpoint-side
+variance/congestion, not a code bug, confirmed by watching the same calls
+complete fine minutes later) — worth knowing if this endpoint gets reused:
+its latency is not reliably representative of the model actually being
+run, and is worth spot-checking with a trivial call before trusting a full
+benchmark run against it.
 
 Full backend test suite: 84 passed, 1 pre-existing unrelated failure (see
 Phase 0 section), 1 skipped. Acceptance criteria verified: a 3-turn

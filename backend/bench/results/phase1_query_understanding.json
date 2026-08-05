@@ -3,16 +3,16 @@
   "n_queries": 15,
   "rewrite_count": 15,
   "understanding_latency_ms": {
-    "mean": 4897.4,
-    "p50": 4027.7,
-    "p95": 10086.3,
-    "p99": 13025.9
+    "mean": 1363.6,
+    "p50": 1344.2,
+    "p95": 1593.0,
+    "p99": 1630.4
   },
   "compaction_summarization_latency_ms": {
-    "mean": 5619.2,
-    "p50": 4556.9,
-    "p95": 10839.5,
-    "p99": 12430.0
+    "mean": 4477.5,
+    "p50": 3719.9,
+    "p95": 8254.8,
+    "p99": 9377.0
   },
   "baseline_end_to_end_ms": {
     "mean": 576.4,
