@@ -252,3 +252,17 @@ and `retrieved_chunks` hang off `ChatMessage` alongside `MessageCitation`;
 decisions and the latency cost of the new call are in `docs/adr/001-004-*.md`
 and the README's Phase 1 section — not re-diagrammed here to avoid this
 document drifting from Phase 0's own audited baseline.
+
+## Phase 2: semantic memory
+
+Adds `app/memory/{schemas,extraction,decay,retrieval,session_extraction}.py`
+and a new `memories` table (course-scoped, `MessageCitation`-independent —
+memories are never citable, see ADR 005). Retrieval happens in
+`chat_service.py` alongside chunk retrieval, feeding a separate
+`<student_context>` block in `build_system_prompt`'s output rather than the
+`<excerpts>` block the query-flow diagram shows. Extraction is not part of
+the request-response query flow at all: it's triggered opportunistically
+from `routers/chat.py`'s session create/list endpoints (ADR 008), so it
+doesn't belong on the diagram above either. Design decisions in
+`docs/adr/005-009-*.md`; acceptance-criteria results and the memory-retrieval
+latency number are in the README's Phase 2 section.

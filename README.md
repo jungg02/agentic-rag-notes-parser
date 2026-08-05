@@ -397,6 +397,69 @@ exercised against the live provider the way understanding was, since
 forcing a real multi-thousand-token conversation was out of scope for this
 pass).
 
+## Phase 2: semantic memory
+
+Durable, cross-session facts about the student, stored in a new `memories`
+table (course-scoped, same embedding model as chunks — ADR 007) and
+retrieved alongside chunks each turn. Extraction runs at end-of-session,
+detected opportunistically since this app has no scheduler (ADR 008): a
+session counts as "ended" once 30 minutes have passed since its last
+message, checked when a course's sessions are created or listed. One
+conservative LLM call (ADR 006) reviews the session and emits durable facts
+— topic/struggle/preference/goal — each with a confidence score; only
+those above threshold get persisted.
+
+At query time, memories are retrieved by cosine similarity, filtered to a
+relevance threshold, capped at 3, and ranked by `similarity × decay_score`
+rather than similarity alone (ADR 005, 009) — a newer or more-accessed
+memory can outrank a more-similar-but-stale one. That's also how conflicts
+are resolved: contradictory facts are never detected or deleted at write
+time, both persist, and decay/ranking sort out which one actually surfaces
+(ADR 009) — cheaper and more honest than unreliable embedding-based
+contradiction detection. `enforce_memory_cap` deletes the lowest-scoring
+memories once a course exceeds 50, using the same decay score. A memory
+survives its source session being deleted (`source_session_id` is
+`SET NULL`, not cascaded) — that's the entire point of "durable." Memories
+render in the system prompt in a separate `<student_context>` block,
+explicitly marked non-citable, so the citation system needed zero changes.
+An inspection endpoint (`GET/DELETE /api/courses/{id}/memories`,
+`DELETE /api/memories/{id}`) lists, searches, and deletes memories for
+debugging and demoing.
+
+**Acceptance criteria:**
+- Facts persist and retrieve in a *later* session — proven directly: a
+  memory extracted from a stale Session 1 shows up in a brand-new Session
+  2's system prompt (same course), not just within the session that
+  produced it.
+- Contradictions handled per the documented policy — proven deterministically:
+  a hand-constructed stale-but-higher-similarity memory loses to a
+  fresh-but-lower-similarity one at retrieval time, exactly ADR 009's
+  mechanism, not just an assertion that the code runs.
+- Forgetting/decay works and the store is bounded — `enforce_memory_cap`
+  evicts the lowest-scoring memories once over 50 per course, scoped so one
+  course's growth can't evict another's, and is actually wired into the
+  extraction sweep (not just a standalone unused function).
+- Memory retrieval adds < 50ms p95 — reproduce with
+  `backend/bench/phase2_memory_retrieval_latency.py`. `retrieve_memories()`
+  itself: **2.12ms mean / 2.7ms p95** against 20 memories (the realistic
+  ceiling — courses cap at 50 regardless of usage length, so this isn't a
+  toy-scale shortcut the way an early Phase 0 measurement was). **Passes by
+  a wide margin.** Caveat worth being direct about: `chat_service.py`
+  embeds the query a second time specifically for memory retrieval, rather
+  than threading `retrieve()`'s internal embedding through (a deliberate
+  choice to avoid touching `retrieval/service.py` this phase). Using Phase
+  0's own measured embed cost for this model (72.8ms p95), the *total*
+  added latency for a turn — embed + retrieve — is closer to **~75ms p95**,
+  over budget if the criterion is read as the full user-facing cost rather
+  than the retrieval mechanism alone. Threading the embedding through
+  instead of recomputing it would close this gap; noted as a follow-up, not
+  done here to keep this phase's touched-file surface to what was
+  disclosed upfront.
+- ADR written for the context budget decision — [ADR 005](docs/adr/005-context-budget.md).
+
+Full backend test suite: 130 passed, 1 pre-existing unrelated failure (see
+Phase 0 section), 1 skipped.
+
 ## Roadmap
 
 - **Phase 1 (this build):** course CRUD, ingestion, hybrid retrieval + RRF +
