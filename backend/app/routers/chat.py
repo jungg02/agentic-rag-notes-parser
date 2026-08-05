@@ -21,12 +21,14 @@ router = APIRouter(tags=["chat"])
 
 def _try_extract_stale_sessions(db: Session, course_id: int, provider: LLMProvider) -> None:
     """Opportunistic end-of-session memory extraction (ADR 008) -- this app
-    has no scheduler, so it piggybacks on the two request paths that
-    already touch a course's sessions. A maintenance sweep failing must
-    never prevent a user from listing or starting chat sessions."""
+    has no scheduler, so it piggybacks on session creation, the one request
+    path where a user is already expecting a brief pause. extract_stale_sessions
+    processes at most one stale session per call, bounding the worst-case added
+    latency to a single provider round-trip. A maintenance sweep failing must
+    never prevent a user from starting a new chat session."""
     try:
         extract_stale_sessions(db, course_id, provider)
-    except Exception:  # noqa: BLE001 - a maintenance sweep must never break session list/create
+    except Exception:  # noqa: BLE001 - a maintenance sweep must never break session creation
         logger.warning("Opportunistic memory extraction sweep failed for course %s", course_id, exc_info=True)
 
 
@@ -46,10 +48,7 @@ def create_session(
 
 
 @router.get("/api/courses/{course_id}/sessions", response_model=list[ChatSessionOut])
-def list_sessions(
-    course_id: int, db: Session = Depends(get_db), provider: LLMProvider = Depends(get_provider)
-):
-    _try_extract_stale_sessions(db, course_id, provider)
+def list_sessions(course_id: int, db: Session = Depends(get_db)):
     return db.scalars(
         select(ChatSession).where(ChatSession.course_id == course_id).order_by(ChatSession.created_at)
     ).all()

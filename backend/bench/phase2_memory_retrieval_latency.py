@@ -8,6 +8,13 @@ representative: MEMORY_MAX_PER_COURSE caps a course at 50 memories
 regardless of how long the app has been used, so benchmarking against
 ~20 memories *is* close to the realistic ceiling, not a shortcut.
 
+Measured with bump_access=True (the default chat_service.py actually
+calls) so the reported number includes the per-result attribute writes
+and db.commit() that path pays for -- not just the read-only search.
+bump_access=False (used only by the inspection endpoint's search) is
+measured separately below for comparison, since it's a real but distinct
+code path.
+
 chat_service.py calls embed_query() a second time specifically for the
 memory-retrieval query (see its comment on why), so the *total* added
 latency for a turn is embed_query() + retrieve_memories() -- reusing
@@ -99,6 +106,25 @@ def sample_queries(n: int, seed: int) -> list[str]:
     return rng.sample(pool, n) if len(pool) >= n else pool[:n]
 
 
+def _measure(db, course_id: int, queries: list[str], *, bump_access: bool) -> dict:
+    # Warm-up, untimed -- excludes one-time connection/index warm state.
+    retrieve_memories(db, course_id, embed_query(queries[0]), bump_access=bump_access)
+
+    latencies_ms = []
+    for query in queries:
+        query_embedding = embed_query(query)
+        start = time.perf_counter()
+        retrieve_memories(db, course_id, query_embedding, bump_access=bump_access)
+        latencies_ms.append((time.perf_counter() - start) * 1000)
+
+    return {
+        "mean": round(statistics.mean(latencies_ms), 2),
+        "p50": round(statistics.median(latencies_ms), 2),
+        "p95": round(percentile(latencies_ms, 95), 2),
+        "p99": round(percentile(latencies_ms, 99), 2),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--n-queries", type=int, default=30)
@@ -112,35 +138,37 @@ def main() -> None:
         course = seed_benchmark_course(db)
         queries = sample_queries(args.n_queries, args.seed)
 
-        # Warm-up, untimed -- excludes one-time connection/index warm state.
-        retrieve_memories(db, course.id, embed_query(queries[0]), bump_access=False)
-
-        latencies_ms = []
-        for query in queries:
-            query_embedding = embed_query(query)
-            start = time.perf_counter()
-            retrieve_memories(db, course.id, query_embedding, bump_access=False)
-            latencies_ms.append((time.perf_counter() - start) * 1000)
+        # Headline number: bump_access=True is what chat_service.py actually
+        # calls on every turn (adds a per-result attribute write + commit).
+        headline = _measure(db, course.id, queries, bump_access=True)
+        # bump_access=False is only used by the read-only memory inspection
+        # endpoint's search -- measured for comparison, not the criterion.
+        read_only = _measure(db, course.id, queries, bump_access=False)
     finally:
         if course is not None:
             db.delete(course)
             db.commit()
         db.close()
 
-    summary = {
-        "mean": round(statistics.mean(latencies_ms), 2),
-        "p50": round(statistics.median(latencies_ms), 2),
-        "p95": round(percentile(latencies_ms, 95), 2),
-        "p99": round(percentile(latencies_ms, 99), 2),
-    }
-
-    print(f"\nMemory retrieval latency (retrieve_memories() only, n={len(latencies_ms)}, "
+    print(f"\nMemory retrieval latency (retrieve_memories() only, n={args.n_queries}, "
           f"{len(_SAMPLE_MEMORIES)} memories):")
-    print(f"  mean: {summary['mean']}ms  p50: {summary['p50']}ms  p95: {summary['p95']}ms  p99: {summary['p99']}ms")
-    print(f"  acceptance criterion (<50ms p95): {'PASS' if summary['p95'] < 50 else 'FAIL'}")
+    print(f"  bump_access=True  (chat path):       mean: {headline['mean']}ms  p50: {headline['p50']}ms  "
+          f"p95: {headline['p95']}ms  p99: {headline['p99']}ms")
+    print(f"  bump_access=False (inspection path): mean: {read_only['mean']}ms  p50: {read_only['p50']}ms  "
+          f"p95: {read_only['p95']}ms  p99: {read_only['p99']}ms")
+    print(f"  acceptance criterion (<50ms p95, chat path): {'PASS' if headline['p95'] < 50 else 'FAIL'}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"n_memories": len(_SAMPLE_MEMORIES), "latency_ms": summary}, indent=2))
+    args.output.write_text(
+        json.dumps(
+            {
+                "n_memories": len(_SAMPLE_MEMORIES),
+                "latency_ms": headline,
+                "latency_ms_bump_access_false": read_only,
+            },
+            indent=2,
+        )
+    )
     print(f"\nWrote {args.output}")
 
 

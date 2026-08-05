@@ -110,11 +110,15 @@ def test_low_confidence_extracted_memory_not_persisted(db_session):
     assert db_session.scalars(select(Memory).where(Memory.course_id == course.id)).all() == []
 
 
-def test_extraction_failure_for_one_session_does_not_break_others(real_db_session):
+def test_extraction_failure_for_one_session_does_not_break_others(real_db_session, monkeypatch):
     # Uses real_db_session, not db_session: this exercises a real
     # db.rollback() call inside session_extraction.py's exception handler,
     # which conflicts with db_session's SAVEPOINT-restart machinery (see
     # conftest.py's own documented distinction between the two fixtures).
+    # Raises the per-call cap to 2 so both stale sessions are attempted in
+    # this call -- otherwise MAX_SESSIONS_PER_SWEEP=1 would stop after the
+    # first and this test wouldn't exercise the "others" part of its name.
+    monkeypatch.setattr(session_extraction, "MAX_SESSIONS_PER_SWEEP", 2)
     course = Course(name="Partial Failure Test Course")
     real_db_session.add(course)
     real_db_session.flush()
@@ -126,11 +130,28 @@ def test_extraction_failure_for_one_session_does_not_break_others(real_db_sessio
         processed = extract_stale_sessions(real_db_session, course.id, provider)
 
         assert processed == 0  # both fail (same raising provider), but no exception propagates
+        assert provider.calls == 2  # both were attempted, independently
         real_db_session.refresh(session_a)
         assert session_a.memory_extracted_through_message_id is None  # watermark not advanced on failure
     finally:
         real_db_session.delete(course)
         real_db_session.commit()
+
+
+def test_sweep_stops_after_max_sessions_per_sweep(db_session):
+    course = Course(name="Sweep Cap Test Course")
+    db_session.add(course)
+    db_session.flush()
+    _session_with_message(db_session, course, age_minutes=60)
+    session_b = _session_with_message(db_session, course, age_minutes=90)
+    provider = FakeProvider(_ONE_MEMORY_REPLY)
+
+    processed = extract_stale_sessions(db_session, course.id, provider)
+
+    assert processed == 1  # MAX_SESSIONS_PER_SWEEP=1 -- only one attempted this call
+    assert provider.calls == 1
+    db_session.refresh(session_b)
+    assert session_b.memory_extracted_through_message_id is None  # left for a later call
 
 
 def test_enforce_memory_cap_invoked_after_processing(db_session, monkeypatch):

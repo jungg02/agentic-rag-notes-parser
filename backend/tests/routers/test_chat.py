@@ -147,7 +147,10 @@ def test_creating_a_session_triggers_extraction_for_a_stale_sibling_session(db_s
         app.dependency_overrides.clear()
 
 
-def test_listing_sessions_triggers_extraction_for_a_stale_session(db_session, course_with_chunk):
+def test_listing_sessions_does_not_trigger_extraction(db_session, course_with_chunk):
+    # list_sessions is a GET hit on every course-page load, so it must not
+    # block on a synchronous LLM call -- only create_session (a deliberate
+    # user action where a brief pause is at least explainable) does.
     _make_stale_session(db_session, course_with_chunk)
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_provider] = lambda: MemoryExtractingFakeProvider()
@@ -157,7 +160,7 @@ def test_listing_sessions_triggers_extraction_for_a_stale_session(db_session, co
         assert response.status_code == 200
 
         memories = db_session.scalars(select(Memory).where(Memory.course_id == course_with_chunk.id)).all()
-        assert len(memories) == 1
+        assert memories == []
     finally:
         app.dependency_overrides.clear()
 

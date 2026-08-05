@@ -255,6 +255,17 @@ cd backend && pytest -v
 cd frontend && npm run test
 ```
 
+The backend test suite creates its `notes_test` database on first run but
+does **not** migrate it afterwards — `Base.metadata.create_all()` only adds
+tables that don't exist yet, it doesn't `ALTER` existing ones for new
+columns. If you pull a change that alters the schema (a new model field, a
+new Alembic migration) and start seeing column-not-found errors from the
+test suite, drop the stale database and let it get recreated:
+
+```bash
+docker compose exec db psql -U notes -c "DROP DATABASE notes_test"
+```
+
 ## Repo layout
 
 ```
@@ -404,10 +415,17 @@ table (course-scoped, same embedding model as chunks — ADR 007) and
 retrieved alongside chunks each turn. Extraction runs at end-of-session,
 detected opportunistically since this app has no scheduler (ADR 008): a
 session counts as "ended" once 30 minutes have passed since its last
-message, checked when a course's sessions are created or listed. One
-conservative LLM call (ADR 006) reviews the session and emits durable facts
-— topic/struggle/preference/goal — each with a confidence score; only
-those above threshold get persisted.
+message, checked when a new session is created for a course. That check
+runs at most one extraction (one LLM call) per request, so the worst-case
+added latency on session creation is bounded rather than growing with the
+number of stale sessions in the course; an earlier version also hooked
+this into listing sessions (a GET hit on every course-page load) but that
+meant a page load could block on — or hang against — a synchronous LLM
+call with no user action to explain the pause, so that hook was removed
+(see ADR 008's "Rejected" section for the reasoning and the observed
+NVIDIA NIM hang that motivated it). One conservative LLM call (ADR 006)
+reviews the session and emits durable facts — topic/struggle/preference/goal
+— each with a confidence score; only those above threshold get persisted.
 
 At query time, memories are retrieved by cosine similarity, filtered to a
 relevance threshold, capped at 3, and ranked by `similarity × decay_score`
@@ -441,23 +459,28 @@ debugging and demoing.
   extraction sweep (not just a standalone unused function).
 - Memory retrieval adds < 50ms p95 — reproduce with
   `backend/bench/phase2_memory_retrieval_latency.py`. `retrieve_memories()`
-  itself: **2.12ms mean / 2.7ms p95** against 20 memories (the realistic
-  ceiling — courses cap at 50 regardless of usage length, so this isn't a
-  toy-scale shortcut the way an early Phase 0 measurement was). **Passes by
-  a wide margin.** Caveat worth being direct about: `chat_service.py`
-  embeds the query a second time specifically for memory retrieval, rather
-  than threading `retrieve()`'s internal embedding through (a deliberate
-  choice to avoid touching `retrieval/service.py` this phase). Using Phase
-  0's own measured embed cost for this model (72.8ms p95), the *total*
-  added latency for a turn — embed + retrieve — is closer to **~75ms p95**,
-  over budget if the criterion is read as the full user-facing cost rather
-  than the retrieval mechanism alone. Threading the embedding through
-  instead of recomputing it would close this gap; noted as a follow-up, not
-  done here to keep this phase's touched-file surface to what was
-  disclosed upfront.
+  itself, measured with `bump_access=True` (what `chat_service.py` actually
+  calls on every turn — includes the per-result attribute writes and
+  `db.commit()` the chat path pays for, not just the read-only search):
+  **3.12ms mean / 3.65ms p95** against 20 memories (the realistic ceiling —
+  courses cap at 50 regardless of usage length, so this isn't a toy-scale
+  shortcut the way an early Phase 0 measurement was). The read-only
+  `bump_access=False` variant used only by the inspection endpoint's search
+  is faster still (1.78ms mean / 2.52ms p95), included in the same run for
+  comparison. **Both pass by a wide margin.** Caveat worth being direct
+  about: `chat_service.py` embeds the query a second time specifically for
+  memory retrieval, rather than threading `retrieve()`'s internal embedding
+  through (a deliberate choice to avoid touching `retrieval/service.py`
+  this phase). Using Phase 0's own measured embed cost for this model
+  (72.8ms p95), the *total* added latency for a turn — embed + retrieve —
+  is closer to **~76ms p95**, over budget if the criterion is read as the
+  full user-facing cost rather than the retrieval mechanism alone.
+  Threading the embedding through instead of recomputing it would close
+  this gap; noted as a follow-up, not done here to keep this phase's
+  touched-file surface to what was disclosed upfront.
 - ADR written for the context budget decision — [ADR 005](docs/adr/005-context-budget.md).
 
-Full backend test suite: 130 passed, 1 pre-existing unrelated failure (see
+Full backend test suite: 131 passed, 1 pre-existing unrelated failure (see
 Phase 0 section), 1 skipped.
 
 ## Roadmap

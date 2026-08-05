@@ -1,18 +1,28 @@
 """Opportunistic end-of-session memory extraction (Phase 2, ADR 008).
 
-No scheduler exists in this app, so staleness is checked at the two
-request paths that already touch a course's sessions (see
-app/routers/chat.py): starting a new session, and listing sessions for a
-course. A session counts as "ended" once SESSION_INACTIVITY_MINUTES have
-passed since its last message and extraction hasn't already run through
-that message (chat_sessions.memory_extracted_through_message_id).
+No scheduler exists in this app, so staleness is checked at the one
+request path where a brief pause is already expected: starting a new
+session (see app/routers/chat.py). A session counts as "ended" once
+SESSION_INACTIVITY_MINUTES have passed since its last message and
+extraction hasn't already run through that message
+(chat_sessions.memory_extracted_through_message_id).
 
-This piggybacks on user-facing requests, so a failure here must never
+extract_stale_sessions processes at most MAX_SESSIONS_PER_SWEEP stale
+session(s) per call and stops there, regardless of outcome -- this bounds
+the worst-case added latency on the triggering request to a fixed number
+of provider round-trips instead of one per stale session in the course.
+Sessions left unprocessed this call are picked up on a later one.
+
+This piggybacks on a user-facing request, so a failure here must never
 break the request that triggered it -- extraction failures for one
 session are logged and skipped, not raised, and the watermark only
 advances for sessions that actually succeeded (so a transient failure
 gets retried on the next opportunity rather than silently skipped
-forever).
+forever). Note: two concurrent requests could both pick up the same
+stale session before either advances the watermark, producing duplicate
+memories -- not addressed here since MAX_SESSIONS_PER_SWEEP=1 makes it
+rare in practice, and duplicate near-identical memories just compete on
+decay score rather than corrupting anything.
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -29,6 +39,7 @@ from app.providers.base import LLMProvider
 logger = logging.getLogger(__name__)
 
 SESSION_INACTIVITY_MINUTES = 30
+MAX_SESSIONS_PER_SWEEP = 1
 
 
 def _as_aware_utc(dt: datetime) -> datetime:
@@ -73,14 +84,25 @@ def _extract_one_session(db: Session, session: ChatSession, to_process: list[Cha
 
 
 def extract_stale_sessions(db: Session, course_id: int, provider: LLMProvider) -> int:
-    """Checks every session in this course for staleness and extracts
-    memory from any that qualify. Returns the number of sessions
-    successfully processed."""
+    """Checks sessions in this course for staleness and extracts memory
+    from up to MAX_SESSIONS_PER_SWEEP of them, stopping after that many
+    attempts (successful or not) so a caller on a request path never pays
+    for more than a fixed number of provider round-trips. Returns the
+    number of sessions successfully processed."""
     now = datetime.now(timezone.utc)
-    sessions = db.scalars(select(ChatSession).where(ChatSession.course_id == course_id)).all()
+    # Ordered by id (creation order) so which session gets the sweep's one
+    # attempt is deterministic and, since it approximates oldest-stale-first,
+    # a reasonable default policy now that the cap makes selection matter.
+    sessions = db.scalars(
+        select(ChatSession).where(ChatSession.course_id == course_id).order_by(ChatSession.id)
+    ).all()
 
     processed = 0
+    attempted = 0
     for session in sessions:
+        if attempted >= MAX_SESSIONS_PER_SWEEP:
+            break
+
         messages = db.scalars(
             select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at)
         ).all()
@@ -92,6 +114,7 @@ def extract_stale_sessions(db: Session, course_id: int, provider: LLMProvider) -
             continue
 
         to_process = _messages_since_watermark(session, messages)
+        attempted += 1
         try:
             _extract_one_session(db, session, to_process, provider)
         except Exception:  # noqa: BLE001 - one session's extraction failure must not break the request that triggered it
