@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -7,19 +8,36 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.generation.chat_service import stream_assistant_reply
+from app.memory.session_extraction import extract_stale_sessions
 from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn
 from app.providers.base import LLMProvider
 from app.providers.factory import get_provider
 from app.schemas import ChatMessageCreate, ChatMessageOut, ChatSessionOut, CitationOut
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["chat"])
 
 
+def _try_extract_stale_sessions(db: Session, course_id: int, provider: LLMProvider) -> None:
+    """Opportunistic end-of-session memory extraction (ADR 008) -- this app
+    has no scheduler, so it piggybacks on the two request paths that
+    already touch a course's sessions. A maintenance sweep failing must
+    never prevent a user from listing or starting chat sessions."""
+    try:
+        extract_stale_sessions(db, course_id, provider)
+    except Exception:  # noqa: BLE001 - a maintenance sweep must never break session list/create
+        logger.warning("Opportunistic memory extraction sweep failed for course %s", course_id, exc_info=True)
+
+
 @router.post("/api/courses/{course_id}/sessions", response_model=ChatSessionOut, status_code=201)
-def create_session(course_id: int, db: Session = Depends(get_db)):
+def create_session(
+    course_id: int, db: Session = Depends(get_db), provider: LLMProvider = Depends(get_provider)
+):
     course = db.get(Course, course_id)
     if course is None:
         raise HTTPException(status_code=404, detail="Course not found")
+    _try_extract_stale_sessions(db, course_id, provider)
     session = ChatSession(course_id=course_id)
     db.add(session)
     db.commit()
@@ -28,7 +46,10 @@ def create_session(course_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/api/courses/{course_id}/sessions", response_model=list[ChatSessionOut])
-def list_sessions(course_id: int, db: Session = Depends(get_db)):
+def list_sessions(
+    course_id: int, db: Session = Depends(get_db), provider: LLMProvider = Depends(get_provider)
+):
+    _try_extract_stale_sessions(db, course_id, provider)
     return db.scalars(
         select(ChatSession).where(ChatSession.course_id == course_id).order_by(ChatSession.created_at)
     ).all()

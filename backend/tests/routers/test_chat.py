@@ -1,12 +1,14 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.db import get_db
 from app.ingestion.embedder import embed_texts
 from app.main import app
-from app.models import Chunk, Course, Document
+from app.models import ChatMessage, ChatSession, Chunk, Course, Document, Memory
 from app.providers.base import LLMResponse
 from app.providers.factory import get_provider
 
@@ -106,3 +108,66 @@ def test_delete_session(client, course_with_chunk):
     session_id = client.post(f"/api/courses/{course_with_chunk.id}/sessions").json()["id"]
     response = client.delete(f"/api/sessions/{session_id}")
     assert response.status_code == 204
+
+
+class MemoryExtractingFakeProvider:
+    def generate(self, messages, system=None, max_tokens=2048):
+        payload = json.dumps(
+            [{"memory_type": "preference", "content": "Prefers worked examples.", "confidence": 0.9}]
+        )
+        return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
+
+    def generate_stream(self, messages, system=None, max_tokens=2048):
+        raise NotImplementedError
+
+
+def _make_stale_session(db_session, course) -> ChatSession:
+    session = ChatSession(course_id=course.id)
+    db_session.add(session)
+    db_session.flush()
+    old = datetime.now(timezone.utc) - timedelta(hours=1)
+    db_session.add(ChatMessage(session_id=session.id, role="user", content="I prefer examples.", created_at=old))
+    db_session.commit()
+    return session
+
+
+def test_creating_a_session_triggers_extraction_for_a_stale_sibling_session(db_session, course_with_chunk):
+    _make_stale_session(db_session, course_with_chunk)
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_provider] = lambda: MemoryExtractingFakeProvider()
+    client = TestClient(app)
+    try:
+        response = client.post(f"/api/courses/{course_with_chunk.id}/sessions")
+        assert response.status_code == 201
+
+        memories = db_session.scalars(select(Memory).where(Memory.course_id == course_with_chunk.id)).all()
+        assert len(memories) == 1
+        assert memories[0].content == "Prefers worked examples."
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_listing_sessions_triggers_extraction_for_a_stale_session(db_session, course_with_chunk):
+    _make_stale_session(db_session, course_with_chunk)
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_provider] = lambda: MemoryExtractingFakeProvider()
+    client = TestClient(app)
+    try:
+        response = client.get(f"/api/courses/{course_with_chunk.id}/sessions")
+        assert response.status_code == 200
+
+        memories = db_session.scalars(select(Memory).where(Memory.course_id == course_with_chunk.id)).all()
+        assert len(memories) == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+# Sweep-failure isolation (a raising provider must not break the request
+# that triggered the sweep) is already covered thoroughly at the module
+# level in tests/memory/test_session_extraction.py, using real_db_session
+# as that requires a genuine db.rollback(). Reproducing it here through the
+# full router/TestClient path isn't practical: db_session's SAVEPOINT-based
+# fixture and a mid-request rollback don't compose (a rollback deep in the
+# request handler corrupts the same connection's other fixture-committed
+# data, like course_with_chunk) -- exactly why that other test doesn't use
+# db_session either.
