@@ -1,5 +1,6 @@
 import re
 
+from app.memory.retrieval import ScoredMemory
 from app.retrieval.rerank import ScoredChunk
 
 _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
@@ -16,8 +17,22 @@ must carry at least one marker. Do not invent excerpt numbers; only 1 through {c
 {excerpts}
 </excerpts>"""
 
+# Separate from <excerpts> deliberately (ADR 005): memories are never
+# citable -- they have no source page, and mixing them into the numbered
+# excerpt list would let the model attach a [n] marker to something
+# MessageCitation can't resolve to a real chunk.
+_MEMORY_SECTION_TEMPLATE = """
 
-def build_system_prompt(course_name: str, chunks: list[ScoredChunk]) -> tuple[str, dict[int, int]]:
+<student_context>
+Background about this student from earlier sessions, not from the course notes -- use it to \
+tailor tone/approach, but do NOT cite it with [n] markers, it has no source page:
+{memory_lines}
+</student_context>"""
+
+
+def build_system_prompt(
+    course_name: str, chunks: list[ScoredChunk], memories: list[ScoredMemory] | None = None
+) -> tuple[str, dict[int, int]]:
     marker_map: dict[int, int] = {}
     excerpt_blocks = []
     for i, scored in enumerate(chunks, start=1):
@@ -32,6 +47,11 @@ def build_system_prompt(course_name: str, chunks: list[ScoredChunk]) -> tuple[st
         count=len(chunks),
         excerpts="\n\n".join(excerpt_blocks) if excerpt_blocks else "(no relevant excerpts found)",
     )
+
+    if memories:
+        memory_lines = "\n".join(f"- {scored.memory.content}" for scored in memories)
+        system_prompt += _MEMORY_SECTION_TEMPLATE.format(memory_lines=memory_lines)
+
     return system_prompt, marker_map
 
 

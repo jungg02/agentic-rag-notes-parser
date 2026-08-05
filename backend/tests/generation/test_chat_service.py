@@ -13,6 +13,7 @@ from app.providers.base import LLMMessage, LLMResponse
 class FakeProvider:
     def __init__(self, reply_text: str):
         self._reply_text = reply_text
+        self.last_system_prompt: str | None = None
 
     def generate(self, messages, system=None, max_tokens=2048):
         # Stands in for the query-understanding call chat_service now makes
@@ -22,6 +23,7 @@ class FakeProvider:
         return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
 
     def generate_stream(self, messages: list[LLMMessage], system=None, max_tokens=2048) -> Iterator[str]:
+        self.last_system_prompt = system
         for word in self._reply_text.split(" "):
             yield word + " "
 
@@ -216,3 +218,34 @@ def test_stream_assistant_reply_with_no_citations_in_reply(db_session):
     events = list(stream_assistant_reply(db_session, session, "Unrelated question?", provider))
     done_data = [e for e in events if e[0] == "done"][0][1]
     assert done_data["citations"] == []
+
+
+def test_relevant_memory_is_injected_into_system_prompt_and_not_citable(db_session):
+    from app.models import Memory
+
+    session, chunk = _seed(db_session)
+    memory_vector = embed_texts(["Prefers worked examples over abstract theory."])[0]
+    db_session.add(
+        Memory(
+            course_id=session.course_id,
+            content="Prefers worked examples over abstract theory.",
+            embedding=memory_vector,
+            memory_type="preference",
+            confidence=0.85,
+        )
+    )
+    db_session.commit()
+
+    provider = FakeProvider("Mitochondria produce ATP [1].")
+    events = list(
+        stream_assistant_reply(db_session, session, "Can you show me a worked example of ATP production?", provider)
+    )
+
+    assert provider.last_system_prompt is not None
+    assert "<student_context>" in provider.last_system_prompt
+    assert "Prefers worked examples over abstract theory." in provider.last_system_prompt
+    assert "do NOT cite" in provider.last_system_prompt
+
+    # the memory must never show up in citations -- only chunk excerpts can
+    done_data = [e for e in events if e[0] == "done"][0][1]
+    assert all(c["chunk_id"] == chunk.id for c in done_data["citations"])

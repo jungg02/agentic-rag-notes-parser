@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.generation.prompts import build_system_prompt, parse_citations
+from app.ingestion.embedder import embed_query
+from app.memory.retrieval import retrieve_memories
 from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn, RetrievedChunk
 from app.providers.base import LLMMessage, LLMProvider
 from app.query.compaction import get_working_history
@@ -58,7 +60,15 @@ def stream_assistant_reply(
         db.add(RetrievedChunk(message_id=user_message.id, chunk_id=scored.chunk.id, rank=rank))
     db.commit()
 
-    system_prompt, marker_map = build_system_prompt(course.name, scored_chunks)
+    # Phase 2, ADR 005: memories are a separate, relevance-thresholded,
+    # capped retrieval -- not fused with chunks, not citable. Embeds the
+    # same (possibly rewritten) query text a second time rather than
+    # threading retrieve()'s internal embedding through, to avoid touching
+    # retrieval/service.py for this phase.
+    memory_query_embedding = embed_query(understanding.retrieval_query)
+    scored_memories = retrieve_memories(db, session.course_id, memory_query_embedding)
+
+    system_prompt, marker_map = build_system_prompt(course.name, scored_chunks, scored_memories)
     # Compaction-aware history (ADR 004) -- includes the user message just
     # committed above, in its original (not rewritten) wording; the
     # rewrite only ever affects which chunks retrieve() found.
