@@ -249,3 +249,51 @@ def test_relevant_memory_is_injected_into_system_prompt_and_not_citable(db_sessi
     # the memory must never show up in citations -- only chunk excerpts can
     done_data = [e for e in events if e[0] == "done"][0][1]
     assert all(c["chunk_id"] == chunk.id for c in done_data["citations"])
+
+
+def test_memory_extracted_from_one_session_surfaces_in_a_later_different_session(db_session):
+    """Phase 2 acceptance criterion: facts persist and are retrieved in a
+    *later* session. Session 1 reveals a preference and goes stale;
+    extraction runs and produces a Memory. A brand new Session 2 in the
+    same course then gets that memory injected into its system prompt --
+    proving persistence and retrieval work across session boundaries, not
+    just within one."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.memory.session_extraction import extract_stale_sessions
+    from app.models import ChatMessage
+
+    session_1, chunk = _seed(db_session)
+    old = datetime.now(timezone.utc) - timedelta(hours=1)
+    db_session.add(
+        ChatMessage(
+            session_id=session_1.id,
+            role="user",
+            content="I prefer worked examples over abstract theory, always.",
+            created_at=old,
+        )
+    )
+    db_session.commit()
+
+    class ExtractionProvider:
+        def generate(self, messages, system=None, max_tokens=2048):
+            payload = json.dumps(
+                [{"memory_type": "preference", "content": "Prefers worked examples over abstract theory.", "confidence": 0.9}]
+            )
+            return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
+
+        def generate_stream(self, messages, system=None, max_tokens=2048):
+            raise NotImplementedError
+
+    processed = extract_stale_sessions(db_session, session_1.course_id, ExtractionProvider())
+    assert processed == 1
+
+    session_2 = ChatSession(course_id=session_1.course_id)
+    db_session.add(session_2)
+    db_session.commit()
+
+    provider = FakeProvider("Mitochondria produce ATP [1].")
+    list(stream_assistant_reply(db_session, session_2, "Can you give me a worked example of ATP production?", provider))
+
+    assert provider.last_system_prompt is not None
+    assert "Prefers worked examples over abstract theory." in provider.last_system_prompt
