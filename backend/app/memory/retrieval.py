@@ -30,8 +30,16 @@ class ScoredMemory:
 
 
 def retrieve_memories(
-    db: Session, course_id: int, query_embedding: list[float], limit: int = MEMORY_MAX_PER_QUERY
+    db: Session,
+    course_id: int,
+    query_embedding: list[float],
+    limit: int = MEMORY_MAX_PER_QUERY,
+    *,
+    bump_access: bool = True,
 ) -> list[ScoredMemory]:
+    """bump_access=False is for read-only observers (the inspection
+    endpoint's search) that shouldn't perturb decay/eviction state just by
+    looking -- the real chat flow always uses the default."""
     rows = db.execute(
         text(
             """
@@ -61,9 +69,10 @@ def retrieve_memories(
     candidates.sort(key=lambda c: c.similarity * decay_score(c.memory, now=now), reverse=True)
     top = candidates[:limit]
 
-    for scored in top:
-        scored.memory.access_count += 1
-        scored.memory.last_accessed_at = now
-    db.commit()
+    if bump_access:
+        for scored in top:
+            scored.memory.access_count += 1
+            scored.memory.last_accessed_at = now
+        db.commit()
 
     return top

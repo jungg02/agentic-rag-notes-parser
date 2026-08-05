@@ -135,3 +135,17 @@ def test_fresher_lower_similarity_memory_can_outrank_stale_higher_similarity_one
     assert len(results) == 2
     assert results[0].memory.id == fresh_lower_sim.id
     assert results[0].similarity < results[1].similarity  # confirms it's NOT just similarity order
+
+
+def test_bump_access_false_does_not_perturb_state(db_session):
+    course, memories = _seed_course_with_memories(
+        db_session, ["Prefers worked examples over abstract theory."]
+    )
+    query_embedding = embed_query("Can you show me a worked example instead of the theory?")
+
+    results = retrieve_memories(db_session, course.id, query_embedding, bump_access=False)
+
+    assert len(results) == 1
+    db_session.refresh(memories[0])
+    assert memories[0].access_count == 0
+    assert memories[0].last_accessed_at is None

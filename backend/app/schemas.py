@@ -63,3 +63,17 @@ class ChatMessageOut(BaseModel):
     # Set only on user-role messages where query understanding rewrote the
     # query before retrieval; None otherwise (including on assistant messages).
     rewritten_query: str | None = None
+
+
+class MemoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    course_id: int
+    content: str
+    memory_type: str
+    confidence: float
+    source_session_id: int | None
+    access_count: int
+    last_accessed_at: datetime | None
+    created_at: datetime
