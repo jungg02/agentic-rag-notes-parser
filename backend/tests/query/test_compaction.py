@@ -104,3 +104,36 @@ def test_no_new_summarization_call_when_nothing_new_to_fold_in(db_session, monke
     # calling again with no new messages must not re-summarize
     compaction.get_working_history(db_session, session, provider)
     assert len(provider.calls) == 1
+
+
+def test_empty_summarizer_response_does_not_advance_high_water_mark(db_session, monkeypatch):
+    """A reasoning provider can burn its whole max_tokens budget on hidden
+    tokens and return nothing visible (observed for real against the
+    configured NVIDIA NIM model -- see understanding.py's headroom note).
+    That must not get treated as "these messages are now summarized" --
+    they'd age out of the verbatim window next turn with no summary and no
+    way to recover them."""
+    monkeypatch.setattr(compaction, "HISTORY_TOKEN_BUDGET", 1)
+    monkeypatch.setattr(compaction, "HISTORY_KEEP_LAST_N", 2)
+    session = _session(db_session)
+    for i in range(4):
+        _add_message(db_session, session, "user" if i % 2 == 0 else "assistant", f"turn {i}")
+    provider = FakeProvider("   ")  # whitespace-only, same failure shape as an empty completion
+
+    history = compaction.get_working_history(db_session, session, provider)
+
+    assert session.summary is None
+    assert session.summarized_through_message_id is None
+    # This turn's context is missing turn 0/1 (no summary to represent them
+    # yet) -- a one-turn gap, not the permanent loss the bug would have
+    # caused, since the high-water mark not advancing means the next call
+    # retries summarizing these same messages instead of skipping them.
+    assert len(history) == 2
+    assert len(provider.calls) == 1
+
+    # next turn must retry summarizing the same messages, not skip them
+    provider2 = FakeProvider("Summary A")
+    compaction.get_working_history(db_session, session, provider2)
+    assert session.summary == "Summary A"
+    retried_transcript = provider2.calls[0][0].content
+    assert "turn 0" in retried_transcript and "turn 1" in retried_transcript
