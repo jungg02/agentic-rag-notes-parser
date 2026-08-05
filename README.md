@@ -322,39 +322,74 @@ endpoint) are catalogued in `docs/ARCHITECTURE.md`.
 
 ## Phase 1: query understanding and working memory
 
-Every chat turn now runs one LLM call before retrieval
-(`app/query/understanding.py`) that classifies intent
-(factual_lookup/comparison/summarization/follow_up) and, only when the
-message can't be understood standalone (pronouns, dropped subjects, "the
-other one"), rewrites it into a standalone query — retrieval then runs on
-the rewrite, not the original wording (ADR
+Every chat turn — not only ones that turn out to need a rewrite — now runs
+one LLM call before retrieval (`app/query/understanding.py`) that classifies
+intent (factual_lookup/comparison/summarization/follow_up) and decides
+whether the message can be understood standalone. Only when it can't
+(pronouns, dropped subjects, "the other one") does the call also produce a
+rewrite, and only then does retrieval run on that rewrite instead of the
+original wording (ADR
 [001](docs/adr/001-rewrite-model.md)–[003](docs/adr/003-retrieval-fusion.md)).
+Classification is unconditional; only the rewrite *action* is conditional —
+the LLM round-trip itself is paid every turn regardless.
+
 Session history compacts automatically past a token budget: the last few
-turns stay verbatim, everything older gets folded into a rolling summary
-(ADR [004](docs/adr/004-compaction-policy.md)). Every turn's intent,
-rewrite, and full retrieved-chunk list (not just what got cited) is now
-persisted (`query_turns`, `retrieved_chunks`) for Phase 3's eval harness.
+turns stay verbatim, everything older gets folded into a rolling summary via
+a second, separate LLM call that fires only on turns where the budget was
+just crossed (ADR [004](docs/adr/004-compaction-policy.md)). Every turn's
+intent, rewrite, and full retrieved-chunk list (not just what got cited) is
+now persisted (`query_turns`, `retrieved_chunks`) for Phase 3's eval harness.
 The rewritten query is shown in the chat UI ("Interpreted as: ...") when it
 differs from what was typed.
 
+**Deferred, not implemented:** Task 2's query expansion (synonym/acronym
+expansion for the lexical arm) — the plan itself marks it optional and says
+"measure before keeping," and there's no eval harness yet to measure
+against (that's Phase 3). Task 3's intent-based routing (retrieving
+comparisons per-entity and merging) — intent is classified and persisted
+per turn but nothing currently reads it to change retrieval behavior; the
+plan frames this as "where it helps," not a hard requirement, and it's a
+meaningfully bigger scope addition than the rest of this phase. Both are
+one-line ADR-worthy decisions to pick up explicitly if a later phase wants
+them, not silent gaps.
+
 **The stop-condition number** — reproduce with
-`backend/bench/phase1_query_understanding_latency.py --course-id 4 --seed 0`:
+`backend/bench/phase1_query_understanding_latency.py --course-id 4 --seed 0`
+(n=15 for understanding, n=8 for compaction; small enough that p95/p99 are
+just the 1-2 slowest samples, not a stable tail estimate — treat mean/p50 as
+the trustworthy numbers here):
 
 | | mean | p50 | p95 | p99 |
 |---|---|---|---|---|
-| query understanding call | 4769.8ms | 4408.3ms | 7735.0ms | 8393.1ms |
+| query understanding (every turn) | 4897.4ms | 4027.7ms | 10086.3ms | 13025.9ms |
+| compaction summarization (only on trigger) | 5619.2ms | 4556.9ms | 10839.5ms | 12430.0ms |
 
-That's **~8x Phase 0's entire end-to-end retrieval pipeline** (576ms mean),
-paid as a network round-trip *before* retrieval even starts on a turn that
-needs a rewrite. It's this large specifically because the configured model
-(`openai/gpt-oss-20b` via NVIDIA NIM, per `.env`) is a reasoning model that
-spends ~400 hidden tokens "thinking" before emitting a ~30-word JSON reply
-— confirmed by watching the response truncate under a smaller `max_tokens`
-during development (see `app/query/understanding.py`'s comment). A
-non-reasoning model sized for this task (classification + rewrite, not deep
-reasoning) would very likely cut this dramatically; worth evaluating before
-this cost is treated as fixed. Full backend test suite: 83 passed, 1
-pre-existing unrelated failure (see Phase 0 section), 1 skipped.
+Both are **~8-10x Phase 0's entire end-to-end retrieval pipeline** (576ms
+mean) — each is one network round-trip, and a turn that both classifies
+*and* triggers compaction pays roughly both on top of retrieval, landing
+around **11 seconds** before the answer even starts streaming. They're this
+large specifically because the configured model (`openai/gpt-oss-20b` via
+NVIDIA NIM, per `.env`) is a reasoning model that spends ~400 hidden tokens
+"thinking" before emitting a ~30-word JSON reply or a short summary —
+confirmed by watching responses truncate under a smaller `max_tokens` during
+development (both `app/query/understanding.py` and `app/query/compaction.py`
+carry headroom for this, with comments). A non-reasoning model sized for
+these tasks (classification/rewrite/summarization, not deep reasoning) would
+very likely cut both dramatically; worth evaluating before this cost is
+treated as fixed — it's the single biggest lever on Phase 1's UX cost.
+
+Full backend test suite: 84 passed, 1 pre-existing unrelated failure (see
+Phase 0 section), 1 skipped. Acceptance criteria verified: a 3-turn
+conversation with pronoun references retrieves the correct chunk each turn
+(automated test, and confirmed live against the real configured provider on
+the DSA2101 course — see commit history); rewrites are logged and
+inspectable via `query_turns` and the API; compaction triggers, keeps the
+verbatim window exact, and — per the fix above — degrades to a one-turn
+context gap rather than permanent loss when the model returns nothing
+usable (verified by unit tests with a fake provider; not additionally
+exercised against the live provider the way understanding was, since
+forcing a real multi-thousand-token conversation was out of scope for this
+pass).
 
 ## Roadmap
 
