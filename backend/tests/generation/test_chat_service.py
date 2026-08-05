@@ -6,7 +6,8 @@ from sqlalchemy import select
 from app.generation.chat_service import stream_assistant_reply
 from app.generation.prompts import build_system_prompt, parse_citations
 from app.ingestion.embedder import embed_texts
-from app.models import ChatSession, Chunk, Course, Document, QueryTurn, RetrievedChunk
+from app.ingestion.image_embedder import embed_image_query
+from app.models import ChatSession, Chunk, Course, Document, Figure, QueryTurn, RetrievedChunk
 from app.providers.base import LLMMessage, LLMResponse
 
 
@@ -297,3 +298,54 @@ def test_memory_extracted_from_one_session_surfaces_in_a_later_different_session
 
     assert provider.last_system_prompt is not None
     assert "Prefers worked examples over abstract theory." in provider.last_system_prompt
+
+
+def test_related_figures_surfaced_in_done_event_but_not_shown_to_the_model(db_session):
+    """Phase 4, ADR 013: figures are searched every turn like memories, but
+    -- unlike memories -- never appear in the system prompt at all, since
+    the (text-only) generation model can't do anything useful with a
+    SigLIP embedding. They're purely a retrieval-quality surface for the
+    frontend."""
+    session, chunk = _seed(db_session)
+    query = "Can you show me a diagram of the ATP production pathway?"
+    # Seeding the figure's embedding via embed_image_query() on the exact
+    # query chat_service will later resolve and re-embed is a deterministic
+    # trick, not a claim about real image content: it guarantees a
+    # perfect-similarity match without depending on SigLIP's zero-shot
+    # judgment of an arbitrary real image, keeping this test fast and exact.
+    figure = Figure(
+        document_id=chunk.document_id, course_id=session.course_id, page_number=5,
+        image_path="/tmp/fig.png",
+        bbox={"page_width": 612.0, "page_height": 792.0, "x0": 0, "y0": 0, "x1": 100, "y1": 100},
+        embedding=embed_image_query(query),
+    )
+    db_session.add(figure)
+    db_session.commit()
+
+    provider = FakeProvider("Mitochondria produce ATP [1].")
+    events = list(stream_assistant_reply(db_session, session, query, provider))
+
+    assert "SigLIP" not in (provider.last_system_prompt or "")
+    assert figure.image_path not in (provider.last_system_prompt or "")
+
+    done_data = [e for e in events if e[0] == "done"][0][1]
+    assert done_data["related_figures"] == [
+        {
+            "figure_id": figure.id,
+            "document_id": chunk.document_id,
+            "filename": "lecture1.pdf",
+            "page_number": 5,
+        }
+    ]
+
+
+def test_related_figures_empty_when_nothing_relevant(db_session):
+    session, chunk = _seed(db_session)
+    # No Figure rows seeded at all -- retrieve_figures() must degrade to
+    # an empty list, not error, the same way it does for an unrelated query.
+    provider = FakeProvider("Mitochondria produce ATP [1].")
+
+    events = list(stream_assistant_reply(db_session, session, "What produces ATP?", provider))
+
+    done_data = [e for e in events if e[0] == "done"][0][1]
+    assert done_data["related_figures"] == []

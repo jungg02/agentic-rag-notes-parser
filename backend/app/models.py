@@ -20,6 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
 EMBEDDING_DIM = 384
+SIGLIP_EMBEDDING_DIM = 768
 
 
 class Course(Base):
@@ -212,3 +213,28 @@ class Memory(Base):
     last_accessed_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class Figure(Base):
+    """An extracted embedded image from a document page (Phase 4 of the
+    retrieval upgrade plan). Independent embedding space from Chunk --
+    SigLIP, not bge-small (ADR 012). `caption`/`caption_tsv` are nullable:
+    a figure is retrievable via `embedding` alone the moment it's
+    extracted, caption generation is a best-effort enrichment that only
+    adds lexical-arm presence when it succeeds (ADR 014)."""
+
+    __tablename__ = "figures"
+    __table_args__ = (Index("figures_course_idx", "course_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=False)
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    image_path: Mapped[str] = mapped_column(Text, nullable=False)
+    bbox: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(SIGLIP_EMBEDDING_DIM), nullable=False)
+    caption: Mapped[str | None] = mapped_column(Text)
+    caption_tsv = mapped_column(TSVECTOR, Computed("to_tsvector('english', coalesce(caption, ''))", persisted=True))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    document: Mapped["Document"] = relationship()

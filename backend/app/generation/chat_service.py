@@ -6,11 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.generation.prompts import build_system_prompt, parse_citations
 from app.ingestion.embedder import embed_query
+from app.ingestion.image_embedder import embed_image_query
 from app.memory.retrieval import retrieve_memories
 from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn, RetrievedChunk
 from app.providers.base import LLMMessage, LLMProvider
 from app.query.compaction import get_working_history
 from app.query.understanding import understand_query
+from app.retrieval.figures import retrieve_figures
 from app.retrieval.service import retrieve
 
 
@@ -18,6 +20,14 @@ from app.retrieval.service import retrieve
 class CitationInfo:
     marker: int
     chunk_id: int
+    document_id: int
+    filename: str
+    page_number: int
+
+
+@dataclass
+class RelatedFigureInfo:
+    figure_id: int
     document_id: int
     filename: str
     page_number: int
@@ -68,6 +78,15 @@ def stream_assistant_reply(
     memory_query_embedding = embed_query(understanding.retrieval_query)
     scored_memories = retrieve_memories(db, session.course_id, memory_query_embedding)
 
+    # Phase 4, ADR 013: figures are searched every turn like memories, but
+    # never shown to the generation model at all -- SigLIP embeddings and
+    # the text system prompt aren't in a space this text-only model can
+    # reason about together, and ADR 013 already ruled out merging figure
+    # scores with chunk scores for ranking. Purely a retrieval-quality
+    # surface, attached to the response for the frontend to render.
+    figure_query_embedding = embed_image_query(understanding.retrieval_query)
+    scored_figures = retrieve_figures(db, session.course_id, understanding.retrieval_query, figure_query_embedding)
+
     system_prompt, marker_map = build_system_prompt(course.name, scored_chunks, scored_memories)
     # Compaction-aware history (ADR 004) -- includes the user message just
     # committed above, in its original (not rewritten) wording; the
@@ -101,9 +120,20 @@ def stream_assistant_reply(
             )
         )
 
+    related_figures = [
+        RelatedFigureInfo(
+            figure_id=sf.figure.id,
+            document_id=sf.figure.document_id,
+            filename=sf.figure.document.original_filename,
+            page_number=sf.figure.page_number,
+        )
+        for sf in scored_figures
+    ]
+
     db.commit()
     yield "done", {
         "message_id": assistant_message.id,
         "citations": [asdict(c) for c in citations],
         "rewritten_query": understanding.rewritten_query,
+        "related_figures": [asdict(f) for f in related_figures],
     }

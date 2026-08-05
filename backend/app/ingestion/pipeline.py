@@ -1,17 +1,21 @@
 import logging
+import shutil
 from pathlib import Path
 from typing import Callable
 
 import fitz
+from PIL import Image
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.ingestion.chunker import chunk_pages
 from app.ingestion.convert import ConversionError, convert_to_pdf
 from app.ingestion.embedder import embed_texts
+from app.ingestion.figures import extract_figures, save_figure_image
+from app.ingestion.image_embedder import embed_images
 from app.ingestion.ocr import ocr_page
 from app.ingestion.parse import PageLines, extract_pages
-from app.models import Chunk, Document
+from app.models import Chunk, Document, Figure
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,56 @@ def _ocr_low_text_pages(pdf_path: Path, pages: list[PageLines]) -> None:
                 page_lines.is_ocr = True
     finally:
         fitz_doc.close()
+
+
+def _extract_and_persist_figures(db: Session, document_id: int, doc_dir: Path, pdf_path: Path) -> None:
+    """Figures are an enrichment on top of the core text pipeline, not part
+    of what makes a document "ready" -- a failure here is logged and
+    skipped, never raised, so it can't flip an otherwise-successful
+    ingestion to "failed" (same graceful-degradation philosophy as OCR;
+    see ADR 014). Re-extracts from scratch every run, replacing old figure
+    rows and image files -- but writes new images to a staging directory
+    and only deletes the old ones after extraction and embedding both
+    succeed, so a failure on retry (e.g. a corrupt embedded image, lazily
+    decoded by Image.open inside embed_images) can't leave the previous
+    ingestion's files deleted with no replacement."""
+    drafts = extract_figures(pdf_path)
+
+    if not drafts:
+        db.execute(delete(Figure).where(Figure.document_id == document_id))
+        shutil.rmtree(doc_dir / "figures", ignore_errors=True)
+        db.commit()
+        return
+
+    staging_root = doc_dir / "figures.staging"
+    shutil.rmtree(staging_root, ignore_errors=True)
+    try:
+        images = [Image.open(save_figure_image(staging_root, draft, index)) for index, draft in enumerate(drafts)]
+        vectors = embed_images(images)
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+    final_dir = doc_dir / "figures"
+    db.execute(delete(Figure).where(Figure.document_id == document_id))
+    shutil.rmtree(final_dir, ignore_errors=True)
+    (staging_root / "figures").rename(final_dir)
+    shutil.rmtree(staging_root, ignore_errors=True)
+
+    doc = db.get(Document, document_id)
+    for index, (draft, vector) in enumerate(zip(drafts, vectors)):
+        image_path = final_dir / f"p{draft.page_number}_{index}.{draft.image_ext}"
+        db.add(
+            Figure(
+                document_id=document_id,
+                course_id=doc.course_id,
+                page_number=draft.page_number,
+                image_path=str(image_path),
+                bbox=draft.bbox,
+                embedding=vector,
+            )
+        )
+    db.commit()
 
 
 def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -> None:
@@ -125,6 +179,12 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
             doc.ingest_status = "ready"
             doc.ingest_error = None
             db.commit()
+
+            try:
+                _extract_and_persist_figures(db, document_id, pdf_path.parent, pdf_path)
+            except Exception:  # noqa: BLE001 - figure extraction failing must not un-ready an otherwise-good document
+                db.rollback()
+                logger.warning("Figure extraction failed for document %s", document_id, exc_info=True)
 
         except (ConversionError, IngestionError) as exc:
             db.rollback()

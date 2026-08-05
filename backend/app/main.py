@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.routers import chat, chunks, courses, coverage, debug, documents, memories
+from app.routers import chat, chunks, courses, coverage, debug, documents, figures, memories
 
 app = FastAPI(title="Study Notes Parser")
 app.include_router(courses.router)
@@ -11,6 +11,7 @@ app.include_router(chat.router)
 app.include_router(chunks.router)
 app.include_router(coverage.router)
 app.include_router(memories.router)
+app.include_router(figures.router)
 
 
 @app.get("/health")

@@ -77,3 +77,15 @@ class MemoryOut(BaseModel):
     access_count: int
     last_accessed_at: datetime | None
     created_at: datetime
+
+
+class FigureOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    document_id: int
+    course_id: int
+    page_number: int
+    bbox: dict
+    caption: str | None
+    created_at: datetime
