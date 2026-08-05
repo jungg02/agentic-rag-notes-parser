@@ -74,5 +74,11 @@ def _parse(raw_text: str, original_query: str) -> QueryUnderstanding:
 
 def understand_query(provider: LLMProvider, history: list[LLMMessage], user_content: str) -> QueryUnderstanding:
     prompt = f"Conversation so far:\n{_format_history(history)}\n\nLatest user message:\n{user_content}"
-    response = provider.generate([LLMMessage(role="user", content=prompt)], system=_SYSTEM_PROMPT, max_tokens=300)
+    # Some providers (reasoning models) spend hidden tokens before emitting
+    # the visible JSON -- those still count against max_tokens, so this
+    # needs real headroom or the response truncates mid-JSON and the
+    # (real) rewrite gets silently discarded by _parse's fallback below.
+    # Measured against openai/gpt-oss-20b: ~400 output tokens for a ~30-word
+    # JSON reply.
+    response = provider.generate([LLMMessage(role="user", content=prompt)], system=_SYSTEM_PROMPT, max_tokens=1500)
     return _parse(response.text, user_content)

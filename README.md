@@ -75,7 +75,7 @@ at each step (`pending → converting → parsing → embedding → ready`, or
    `BAAI/bge-small-en-v1.5` and store the vectors.
 6. **Finalize** — status flips to `ready`. Any failure is recorded in
    `ingest_error` with the original file retained, so ingestion can be
-   retried without re-uploading.
+   retried without re-upload
 
 Scanned/image-only pages are recovered via local OCR (Tesseract) when their
 native text is too sparse to be useful — this also handles documents that are
@@ -319,6 +319,42 @@ stages in front of it. Known weaknesses (broken test-DB fixture blocking
 29/60 backend tests on a fresh clone, a silent embedding-truncation gap
 above ~512 tokens, dead code, duplicated retrieval logic in the debug
 endpoint) are catalogued in `docs/ARCHITECTURE.md`.
+
+## Phase 1: query understanding and working memory
+
+Every chat turn now runs one LLM call before retrieval
+(`app/query/understanding.py`) that classifies intent
+(factual_lookup/comparison/summarization/follow_up) and, only when the
+message can't be understood standalone (pronouns, dropped subjects, "the
+other one"), rewrites it into a standalone query — retrieval then runs on
+the rewrite, not the original wording (ADR
+[001](docs/adr/001-rewrite-model.md)–[003](docs/adr/003-retrieval-fusion.md)).
+Session history compacts automatically past a token budget: the last few
+turns stay verbatim, everything older gets folded into a rolling summary
+(ADR [004](docs/adr/004-compaction-policy.md)). Every turn's intent,
+rewrite, and full retrieved-chunk list (not just what got cited) is now
+persisted (`query_turns`, `retrieved_chunks`) for Phase 3's eval harness.
+The rewritten query is shown in the chat UI ("Interpreted as: ...") when it
+differs from what was typed.
+
+**The stop-condition number** — reproduce with
+`backend/bench/phase1_query_understanding_latency.py --course-id 4 --seed 0`:
+
+| | mean | p50 | p95 | p99 |
+|---|---|---|---|---|
+| query understanding call | 4769.8ms | 4408.3ms | 7735.0ms | 8393.1ms |
+
+That's **~8x Phase 0's entire end-to-end retrieval pipeline** (576ms mean),
+paid as a network round-trip *before* retrieval even starts on a turn that
+needs a rewrite. It's this large specifically because the configured model
+(`openai/gpt-oss-20b` via NVIDIA NIM, per `.env`) is a reasoning model that
+spends ~400 hidden tokens "thinking" before emitting a ~30-word JSON reply
+— confirmed by watching the response truncate under a smaller `max_tokens`
+during development (see `app/query/understanding.py`'s comment). A
+non-reasoning model sized for this task (classification + rewrite, not deep
+reasoning) would very likely cut this dramatically; worth evaluating before
+this cost is treated as fixed. Full backend test suite: 83 passed, 1
+pre-existing unrelated failure (see Phase 0 section), 1 skipped.
 
 ## Roadmap
 

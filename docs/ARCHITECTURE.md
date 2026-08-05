@@ -238,3 +238,17 @@ course in the DB; `corpus.benchmarked_course_chunks` is the actual working
 set the latency numbers below it were measured against, since
 `search_lexical`/`search_vector` are course-scoped — don't conflate the two
 when quoting a number.
+
+## Phase 1: query understanding and working memory
+
+This module map and the ingestion/query flow diagrams above describe the
+system as of Phase 0. Phase 1 adds `app/query/{understanding,compaction}.py`
+in front of the query-flow diagram's `retrieve: course-scoped` step (one LLM
+call classifies intent and conditionally rewrites the query before
+retrieval runs), and swaps `_history_messages` for a compaction-aware
+history builder in front of `build_system_prompt`. New tables `query_turns`
+and `retrieved_chunks` hang off `ChatMessage` alongside `MessageCitation`;
+`chat_sessions` gained `summary`/`summarized_through_message_id`. Design
+decisions and the latency cost of the new call are in `docs/adr/001-004-*.md`
+and the README's Phase 1 section — not re-diagrammed here to avoid this
+document drifting from Phase 0's own audited baseline.
