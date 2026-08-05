@@ -1,4 +1,4 @@
-from app.models import ChatMessage, ChatSession, Course, Document, Chunk, QueryTurn, RetrievedChunk
+from app.models import ChatMessage, ChatSession, Course, Document, Chunk, Memory, QueryTurn, RetrievedChunk
 
 
 def test_create_course_document_chunk(db_session):
@@ -89,3 +89,36 @@ def test_query_turn_and_retrieved_chunks_and_session_compaction_state(db_session
     assert session.summary == "Discussed BM25 vs dense retrieval."
     assert session.summarized_through_message_id == user_message.id
     assert len(session.messages) == 1
+
+
+def test_memory_persists_and_survives_source_session_deletion(db_session):
+    course = Course(name="Semantic Memory Test Course")
+    db_session.add(course)
+    db_session.flush()
+
+    session = ChatSession(course_id=course.id)
+    db_session.add(session)
+    db_session.flush()
+
+    memory = Memory(
+        course_id=course.id,
+        content="Prefers worked examples over theory-first explanations.",
+        embedding=[0.02] * 384,
+        memory_type="preference",
+        confidence=0.85,
+        source_session_id=session.id,
+    )
+    db_session.add(memory)
+    db_session.flush()
+
+    assert memory.access_count == 0
+    assert memory.last_accessed_at is None
+
+    session_id_before_delete = session.id
+    db_session.delete(session)
+    db_session.flush()
+    db_session.refresh(memory)
+
+    assert memory.id is not None  # memory survives its source session being deleted
+    assert memory.source_session_id is None  # FK set null, not cascaded
+    assert session_id_before_delete is not None

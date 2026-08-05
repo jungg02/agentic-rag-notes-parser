@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -103,6 +104,14 @@ class ChatSession(Base):
         ForeignKey("chat_messages.id", ondelete="SET NULL")
     )
 
+    # Semantic-memory extraction watermark (ADR 008): null until this
+    # session is first detected stale (SESSION_INACTIVITY_MINUTES since its
+    # last message) and extracted; then holds the id of the last message
+    # extraction has processed, so a later check only extracts new turns.
+    memory_extracted_through_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_messages.id", ondelete="SET NULL")
+    )
+
     messages: Mapped[list["ChatMessage"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", foreign_keys="ChatMessage.session_id"
     )
@@ -174,3 +183,32 @@ class RetrievedChunk(Base):
 
     message: Mapped["ChatMessage"] = relationship()
     chunk: Mapped["Chunk"] = relationship()
+
+
+class Memory(Base):
+    """Durable, cross-session fact about the user (Phase 2 of the retrieval
+    upgrade plan). Course-scoped, consistent with every other retrieval
+    concept in this app being course-scoped. See docs/adr/005-009."""
+
+    __tablename__ = "memories"
+    __table_args__ = (
+        CheckConstraint(
+            "memory_type IN ('topic','struggle','preference','goal')", name="ck_memory_type"
+        ),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_memory_confidence_range"),
+        Index("memories_course_idx", "course_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    memory_type: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    # Nullable + SET NULL: the source session can be deleted while the
+    # memory it produced persists -- that's the entire point of Task 1.
+    source_session_id: Mapped[int | None] = mapped_column(ForeignKey("chat_sessions.id", ondelete="SET NULL"))
+    access_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_accessed_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
