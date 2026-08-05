@@ -20,6 +20,7 @@ function makeMessages(count: number): ChatMessage[] {
     content: `Message ${i + 1}`,
     created_at: "2026-01-01T00:00:00Z",
     citations: [],
+    rewritten_query: null,
   }));
 }
 
@@ -40,6 +41,7 @@ describe("MessageList", () => {
         content: "Mitochondria produce ATP [1].",
         created_at: "2026-01-01T00:00:00Z",
         citations: [{ marker: 1, chunk_id: 5, document_id: 2, filename: "notes.pdf", page_number: 1 }],
+        rewritten_query: null,
       },
     ];
 
@@ -59,10 +61,41 @@ describe("MessageList", () => {
         content: "This has an unresolved marker [9].",
         created_at: "2026-01-01T00:00:00Z",
         citations: [],
+        rewritten_query: null,
       },
     ];
     render(<MessageList messages={messages} onOpenSource={() => {}} />);
     expect(screen.getByText("[9]", { exact: false })).toBeInTheDocument();
+  });
+
+  it("shows the rewritten query when it differs from the original message", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 1,
+        role: "user",
+        content: "Which one handles typos better?",
+        created_at: "2026-01-01T00:00:00Z",
+        citations: [],
+        rewritten_query: "Does BM25 or dense retrieval handle typos better?",
+      },
+    ];
+    render(<MessageList messages={messages} onOpenSource={() => {}} />);
+    expect(screen.getByText(/Does BM25 or dense retrieval handle typos better\?/)).toBeInTheDocument();
+  });
+
+  it("does not show a rewritten-query note when there was no rewrite", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 1,
+        role: "user",
+        content: "What is BM25?",
+        created_at: "2026-01-01T00:00:00Z",
+        citations: [],
+        rewritten_query: null,
+      },
+    ];
+    render(<MessageList messages={messages} onOpenSource={() => {}} />);
+    expect(screen.queryByText(/Interpreted as/)).not.toBeInTheDocument();
   });
 });
 

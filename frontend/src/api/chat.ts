@@ -16,6 +16,7 @@ export interface ChatMessage {
   content: string;
   created_at: string;
   citations: Citation[];
+  rewritten_query: string | null;
 }
 
 export interface ChatSession {
@@ -65,7 +66,7 @@ export async function sendMessageStream(
   sessionId: number,
   content: string,
   onDelta: (text: string) => void,
-  onDone: (data: { message_id: number; citations: Citation[] }) => void
+  onDone: (data: { message_id: number; citations: Citation[]; rewritten_query: string | null }) => void
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/messages`, {
     method: "POST",

@@ -65,10 +65,41 @@ def test_create_session_and_send_message(client, course_with_chunk):
     messages_resp = client.get(f"/api/sessions/{session_id}/messages")
     messages = messages_resp.json()
     assert len(messages) == 2  # user + assistant
-    assistant_message = messages[1]
+    user_message, assistant_message = messages
     assert assistant_message["role"] == "assistant"
     assert len(assistant_message["citations"]) == 1
     assert assistant_message["citations"][0]["page_number"] == 1
+    assert user_message["rewritten_query"] is None  # FakeProvider always reports needs_rewrite=false
+
+
+class RewritingFakeProvider(FakeProvider):
+    def generate(self, messages, system=None, max_tokens=2048):
+        payload = json.dumps(
+            {
+                "intent": "follow_up",
+                "needs_rewrite": True,
+                "standalone_query": "What produces ATP in a cell?",
+            }
+        )
+        return LLMResponse(text=payload, input_tokens=1, output_tokens=1, stop_reason="end_turn")
+
+
+def test_rewritten_query_surfaced_in_done_event_and_message_history(db_session, course_with_chunk):
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_provider] = lambda: RewritingFakeProvider()
+    client = TestClient(app)
+    try:
+        session_id = client.post(f"/api/courses/{course_with_chunk.id}/sessions").json()["id"]
+
+        message_resp = client.post(f"/api/sessions/{session_id}/messages", json={"content": "What does that do?"})
+        assert 'event: done\ndata: {"message_id"' in message_resp.text
+        assert '"rewritten_query": "What produces ATP in a cell?"' in message_resp.text
+
+        messages = client.get(f"/api/sessions/{session_id}/messages").json()
+        user_message = messages[0]
+        assert user_message["rewritten_query"] == "What produces ATP in a cell?"
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_delete_session(client, course_with_chunk):

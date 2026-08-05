@@ -37,6 +37,7 @@ beforeEach(() => {
             content: "Hello from Investment and Finance",
             created_at: "2026-01-01T00:00:00Z",
             citations: [],
+            rewritten_query: null,
           },
         ]);
       }

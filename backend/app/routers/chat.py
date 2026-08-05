@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.generation.chat_service import stream_assistant_reply
-from app.models import ChatMessage, ChatSession, Course, MessageCitation
+from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn
 from app.providers.base import LLMProvider
 from app.providers.factory import get_provider
 from app.schemas import ChatMessageCreate, ChatMessageOut, ChatSessionOut, CitationOut
@@ -40,6 +40,13 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
         select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at)
     ).all()
 
+    query_turns_by_message_id = {
+        qt.message_id: qt
+        for qt in db.scalars(
+            select(QueryTurn).where(QueryTurn.message_id.in_([m.id for m in messages]))
+        ).all()
+    }
+
     result = []
     for m in messages:
         citation_rows = db.scalars(select(MessageCitation).where(MessageCitation.message_id == m.id)).all()
@@ -53,7 +60,17 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
             )
             for c in citation_rows
         ]
-        result.append(ChatMessageOut(id=m.id, role=m.role, content=m.content, created_at=m.created_at, citations=citations))
+        query_turn = query_turns_by_message_id.get(m.id)
+        result.append(
+            ChatMessageOut(
+                id=m.id,
+                role=m.role,
+                content=m.content,
+                created_at=m.created_at,
+                citations=citations,
+                rewritten_query=query_turn.rewritten_query if query_turn else None,
+            )
+        )
     return result
 
 

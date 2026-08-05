@@ -59,6 +59,7 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
       content,
       created_at: new Date().toISOString(),
       citations: [],
+      rewritten_query: null,
     };
     const assistantDraft: ChatMessage = {
       id: -2,
@@ -66,6 +67,7 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
       content: "",
       created_at: new Date().toISOString(),
       citations: [],
+      rewritten_query: null,
     };
     setStreamingMessages([userMessage, assistantDraft]);
 
@@ -81,7 +83,10 @@ export function ChatPane({ courseId, onOpenSource }: ChatPaneProps) {
       (data) => {
         setStreamingMessages((prev) => {
           const [user, assistant] = prev;
-          return [user, { ...assistant, id: data.message_id, citations: data.citations }];
+          return [
+            { ...user, rewritten_query: data.rewritten_query },
+            { ...assistant, id: data.message_id, citations: data.citations },
+          ];
         });
         queryClient.invalidateQueries({ queryKey: ["chat-messages", sessionId] });
         setIsSending(false);

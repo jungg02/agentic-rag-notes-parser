@@ -58,6 +58,9 @@ export function MessageList({ messages, onOpenSource }: MessageListProps) {
       {messages.map((message) => (
         <div key={message.id} className={`message message-${message.role}`}>
           {renderContentWithCitations(message, onOpenSource)}
+          {message.rewritten_query && message.rewritten_query !== message.content && (
+            <div className="message-rewritten-query">Interpreted as: "{message.rewritten_query}"</div>
+          )}
         </div>
       ))}
       <div ref={bottomRef} />

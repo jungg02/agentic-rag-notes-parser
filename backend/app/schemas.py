@@ -60,3 +60,6 @@ class ChatMessageOut(BaseModel):
     content: str
     created_at: datetime
     citations: list[CitationOut] = []
+    # Set only on user-role messages where query understanding rewrote the
+    # query before retrieval; None otherwise (including on assistant messages).
+    rewritten_query: str | None = None
