@@ -8,7 +8,7 @@ from app.generation.prompts import build_system_prompt, parse_citations
 from app.ingestion.embedder import embed_query
 from app.ingestion.image_embedder import embed_image_query
 from app.memory.retrieval import retrieve_memories
-from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn, RetrievedChunk
+from app.models import ChatMessage, ChatSession, Course, MessageCitation, MessageFigure, QueryTurn, RetrievedChunk
 from app.providers.base import LLMMessage, LLMProvider
 from app.query.compaction import get_working_history
 from app.query.understanding import understand_query
@@ -129,6 +129,8 @@ def stream_assistant_reply(
         )
         for sf in scored_figures
     ]
+    for sf in scored_figures:
+        db.add(MessageFigure(message_id=assistant_message.id, figure_id=sf.figure.id))
 
     db.commit()
     yield "done", {

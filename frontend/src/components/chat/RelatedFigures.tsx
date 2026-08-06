@@ -2,12 +2,12 @@ import type { RelatedFigure } from "../../api/chat";
 import "./RelatedFigures.css";
 
 interface RelatedFiguresProps {
-  figures: RelatedFigure[];
+  figures: RelatedFigure[] | undefined;
   onOpenFigure: (figure: RelatedFigure) => void;
 }
 
 export function RelatedFigures({ figures, onOpenFigure }: RelatedFiguresProps) {
-  if (figures.length === 0) return null;
+  if (!figures || figures.length === 0) return null;
 
   return (
     <div className="related-figures">

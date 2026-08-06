@@ -31,7 +31,14 @@ describe("ChatPane clear chat", () => {
         }
         if (url === "/api/sessions/5/messages") {
           return jsonResponse([
-            { id: 100, role: "assistant", content: "Hi there", created_at: "2026-01-01T00:00:00Z", citations: [] },
+            {
+              id: 100,
+              role: "assistant",
+              content: "Hi there",
+              created_at: "2026-01-01T00:00:00Z",
+              citations: [],
+              related_figures: [],
+            },
           ]);
         }
         if (url === "/api/sessions/5" && options?.method === "DELETE") {

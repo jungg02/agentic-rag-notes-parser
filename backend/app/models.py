@@ -130,6 +130,9 @@ class ChatMessage(Base):
 
     session: Mapped["ChatSession"] = relationship(back_populates="messages", foreign_keys=[session_id])
     citations: Mapped[list["MessageCitation"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+    related_figures: Mapped[list["MessageFigure"]] = relationship(
+        back_populates="message", cascade="all, delete-orphan"
+    )
 
 
 class MessageCitation(Base):
@@ -143,6 +146,23 @@ class MessageCitation(Base):
 
     message: Mapped["ChatMessage"] = relationship(back_populates="citations")
     chunk: Mapped["Chunk"] = relationship()
+
+
+class MessageFigure(Base):
+    """Which figures were surfaced alongside a given assistant message
+    (Phase 4 follow-up) -- mirrors MessageCitation's role for chunks.
+    Without this, related_figures only ever existed in the one-time SSE
+    "done" payload and vanished on any remount/refetch of message
+    history (e.g. switching courses), unlike citations."""
+
+    __tablename__ = "message_figures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False)
+    figure_id: Mapped[int] = mapped_column(ForeignKey("figures.id", ondelete="CASCADE"), nullable=False)
+
+    message: Mapped["ChatMessage"] = relationship(back_populates="related_figures")
+    figure: Mapped["Figure"] = relationship()
 
 
 class QueryTurn(Base):

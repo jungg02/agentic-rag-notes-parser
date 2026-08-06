@@ -23,6 +23,7 @@ export interface ChatMessage {
   content: string;
   created_at: string;
   citations: Citation[];
+  related_figures: RelatedFigure[];
   rewritten_query: string | null;
 }
 

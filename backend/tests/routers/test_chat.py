@@ -7,8 +7,9 @@ from sqlalchemy import select
 
 from app.db import get_db
 from app.ingestion.embedder import embed_texts
+from app.ingestion.image_embedder import embed_image_query
 from app.main import app
-from app.models import ChatMessage, ChatSession, Chunk, Course, Document, Memory
+from app.models import ChatMessage, ChatSession, Chunk, Course, Document, Figure, Memory
 from app.providers.base import LLMResponse
 from app.providers.factory import get_provider
 
@@ -72,6 +73,48 @@ def test_create_session_and_send_message(client, course_with_chunk):
     assert len(assistant_message["citations"]) == 1
     assert assistant_message["citations"][0]["page_number"] == 1
     assert user_message["rewritten_query"] is None  # FakeProvider always reports needs_rewrite=false
+
+
+def test_related_figures_persist_and_survive_a_fresh_fetch(db_session, client, course_with_chunk):
+    """Regression test: related_figures used to only exist in the one-time
+    SSE "done" payload, so a course switch (which remounts the chat pane
+    and refetches message history from scratch) lost them for every
+    already-rendered message. message_figures (mirroring message_citations
+    for chunks) makes them part of the persisted, refetchable message."""
+    document = db_session.scalars(select(Chunk).where(Chunk.course_id == course_with_chunk.id)).first().document
+    db_session.add(
+        Figure(
+            course_id=course_with_chunk.id, document_id=document.id, page_number=1,
+            image_path="/tmp/fig1.png",
+            bbox={"page_width": 612.0, "page_height": 792.0, "x0": 0, "y0": 0, "x1": 100, "y1": 100},
+            embedding=embed_image_query("What produces ATP?"),
+        )
+    )
+    db_session.commit()
+
+    session_id = client.post(f"/api/courses/{course_with_chunk.id}/sessions").json()["id"]
+
+    message_resp = client.post(f"/api/sessions/{session_id}/messages", json={"content": "What produces ATP?"})
+    assert message_resp.status_code == 200
+    done_data = None
+    for raw_event in message_resp.text.split("\n\n"):
+        lines = raw_event.split("\n")
+        if any(line == "event: done" for line in lines):
+            data_line = next(line for line in lines if line.startswith("data: "))
+            done_data = json.loads(data_line[len("data: "):])
+    assert done_data is not None
+    assert len(done_data["related_figures"]) == 1
+    assert done_data["related_figures"][0]["page_number"] == 1
+
+    # A brand-new request against the same session -- exactly what a
+    # remounted ChatPane's message-history fetch does after a course
+    # switch. Before message_figures existed, this returned [] here even
+    # though the "done" event above carried the figure.
+    messages = client.get(f"/api/sessions/{session_id}/messages").json()
+    assistant_message = messages[-1]
+    assert assistant_message["role"] == "assistant"
+    assert len(assistant_message["related_figures"]) == 1
+    assert assistant_message["related_figures"][0]["page_number"] == 1
 
 
 class RewritingFakeProvider(FakeProvider):

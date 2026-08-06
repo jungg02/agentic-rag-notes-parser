@@ -8,7 +8,6 @@ import { RelatedFigures } from "./RelatedFigures";
 interface MessageListProps {
   messages: ChatMessage[];
   onOpenSource: (chunkId: number) => void;
-  relatedFiguresByMessageId: Record<number, RelatedFigure[]>;
   onOpenFigure: (figure: RelatedFigure) => void;
 }
 
@@ -31,7 +30,7 @@ function renderContentWithCitations(message: ChatMessage, onOpenSource: (chunkId
   });
 }
 
-export function MessageList({ messages, onOpenSource, relatedFiguresByMessageId, onOpenFigure }: MessageListProps) {
+export function MessageList({ messages, onOpenSource, onOpenFigure }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
@@ -65,7 +64,7 @@ export function MessageList({ messages, onOpenSource, relatedFiguresByMessageId,
             <div className="message-rewritten-query">Interpreted as: "{message.rewritten_query}"</div>
           )}
           {message.role === "assistant" && (
-            <RelatedFigures figures={relatedFiguresByMessageId[message.id] ?? []} onOpenFigure={onOpenFigure} />
+            <RelatedFigures figures={message.related_figures} onOpenFigure={onOpenFigure} />
           )}
         </div>
       ))}

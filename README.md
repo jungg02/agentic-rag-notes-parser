@@ -643,7 +643,15 @@ time at all") and neither was started.
 
 Reproduce: `docker compose run --rm backend python bench/phase4_figure_ablation.py`.
 
-Full backend test suite: 184 passed, 1 pre-existing unrelated failure
+**Post-phase fix:** `related_figures` originally only existed in the
+one-time SSE `"done"` payload, never persisted — switching courses (or
+any remount of the chat pane) discarded it for every already-rendered
+message, even though citations survived the same remount. Fixed with a
+`message_figures` join table mirroring `message_citations`'s role for
+chunks, populated in the same commit as the assistant message and
+returned by `GET /api/sessions/{id}/messages` alongside citations.
+
+Full backend test suite: 185 passed, 1 pre-existing unrelated failure
 (see Phase 0 section), 1 skipped.
 
 ## Roadmap

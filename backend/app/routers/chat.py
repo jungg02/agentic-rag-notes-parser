@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.generation.chat_service import stream_assistant_reply
 from app.memory.session_extraction import extract_stale_sessions
-from app.models import ChatMessage, ChatSession, Course, MessageCitation, QueryTurn
+from app.models import ChatMessage, ChatSession, Course, MessageCitation, MessageFigure, QueryTurn
 from app.providers.base import LLMProvider
 from app.providers.factory import get_provider
-from app.schemas import ChatMessageCreate, ChatMessageOut, ChatSessionOut, CitationOut
+from app.schemas import ChatMessageCreate, ChatMessageOut, ChatSessionOut, CitationOut, RelatedFigureOut
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,16 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
             )
             for c in citation_rows
         ]
+        figure_rows = db.scalars(select(MessageFigure).where(MessageFigure.message_id == m.id)).all()
+        related_figures = [
+            RelatedFigureOut(
+                figure_id=mf.figure_id,
+                document_id=mf.figure.document_id,
+                filename=mf.figure.document.original_filename,
+                page_number=mf.figure.page_number,
+            )
+            for mf in figure_rows
+        ]
         query_turn = query_turns_by_message_id.get(m.id)
         result.append(
             ChatMessageOut(
@@ -88,6 +98,7 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
                 content=m.content,
                 created_at=m.created_at,
                 citations=citations,
+                related_figures=related_figures,
                 rewritten_query=query_turn.rewritten_query if query_turn else None,
             )
         )

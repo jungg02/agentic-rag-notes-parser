@@ -37,6 +37,16 @@ beforeEach(() => {
             content: "Hello from Investment and Finance",
             created_at: "2026-01-01T00:00:00Z",
             citations: [],
+            related_figures: [],
+            rewritten_query: null,
+          },
+          {
+            id: 101,
+            role: "assistant",
+            content: "Here's a diagram.",
+            created_at: "2026-01-01T00:00:00Z",
+            citations: [],
+            related_figures: [{ figure_id: 9, document_id: 5, filename: "Week1.pdf", page_number: 2 }],
             rewritten_query: null,
           },
         ]);
@@ -70,5 +80,20 @@ describe("App course switching", () => {
 
     await waitFor(() => expect(screen.getByText("Start a new chat")).toBeInTheDocument());
     expect(screen.queryByText("Hello from Investment and Finance")).not.toBeInTheDocument();
+  });
+
+  it("keeps a message's related figures visible after switching away and back", async () => {
+    render(<App />);
+
+    const investmentButton = await screen.findByText("Investment and Finance (0)");
+    fireEvent.click(investmentButton);
+    await waitFor(() => expect(screen.getByTitle("Week1.pdf, page 2")).toBeInTheDocument());
+
+    const st3131Button = await screen.findByText("ST3131 (0)");
+    fireEvent.click(st3131Button);
+    await waitFor(() => expect(screen.getByText("Start a new chat")).toBeInTheDocument());
+
+    fireEvent.click(investmentButton);
+    await waitFor(() => expect(screen.getByTitle("Week1.pdf, page 2")).toBeInTheDocument());
   });
 });

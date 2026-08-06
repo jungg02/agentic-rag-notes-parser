@@ -54,12 +54,20 @@ class CitationOut(BaseModel):
     page_number: int
 
 
+class RelatedFigureOut(BaseModel):
+    figure_id: int
+    document_id: int
+    filename: str
+    page_number: int
+
+
 class ChatMessageOut(BaseModel):
     id: int
     role: str
     content: str
     created_at: datetime
     citations: list[CitationOut] = []
+    related_figures: list[RelatedFigureOut] = []
     # Set only on user-role messages where query understanding rewrote the
     # query before retrieval; None otherwise (including on assistant messages).
     rewritten_query: str | None = None

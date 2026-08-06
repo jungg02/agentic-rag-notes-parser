@@ -28,11 +28,6 @@ export function ChatPane({ courseId, onOpenSource, onOpenFigure }: ChatPaneProps
   const { data: persistedMessages } = useChatMessages(sessionId);
   const [streamingMessages, setStreamingMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
-  // Related figures aren't persisted server-side (see ADR 013/README Phase
-  // 4 -- they're a best-effort retrieval surface, not a durable citation),
-  // so they only exist for turns generated in this browser session; keyed
-  // by real message_id once "done" arrives (never by the -2 draft id).
-  const [relatedFiguresByMessageId, setRelatedFiguresByMessageId] = useState<Record<number, RelatedFigure[]>>({});
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -65,6 +60,7 @@ export function ChatPane({ courseId, onOpenSource, onOpenFigure }: ChatPaneProps
       content,
       created_at: new Date().toISOString(),
       citations: [],
+      related_figures: [],
       rewritten_query: null,
     };
     const assistantDraft: ChatMessage = {
@@ -73,6 +69,7 @@ export function ChatPane({ courseId, onOpenSource, onOpenFigure }: ChatPaneProps
       content: "",
       created_at: new Date().toISOString(),
       citations: [],
+      related_figures: [],
       rewritten_query: null,
     };
     setStreamingMessages([userMessage, assistantDraft]);
@@ -91,10 +88,9 @@ export function ChatPane({ courseId, onOpenSource, onOpenFigure }: ChatPaneProps
           const [user, assistant] = prev;
           return [
             { ...user, rewritten_query: data.rewritten_query },
-            { ...assistant, id: data.message_id, citations: data.citations },
+            { ...assistant, id: data.message_id, citations: data.citations, related_figures: data.related_figures },
           ];
         });
-        setRelatedFiguresByMessageId((prev) => ({ ...prev, [data.message_id]: data.related_figures }));
         queryClient.invalidateQueries({ queryKey: ["chat-messages", sessionId] });
         setIsSending(false);
       }
@@ -123,12 +119,7 @@ export function ChatPane({ courseId, onOpenSource, onOpenFigure }: ChatPaneProps
           Clear chat
         </button>
       </div>
-      <MessageList
-        messages={allMessages}
-        onOpenSource={onOpenSource}
-        relatedFiguresByMessageId={relatedFiguresByMessageId}
-        onOpenFigure={onOpenFigure}
-      />
+      <MessageList messages={allMessages} onOpenSource={onOpenSource} onOpenFigure={onOpenFigure} />
       <ChatInput onSend={handleSend} disabled={isSending} />
     </div>
   );
