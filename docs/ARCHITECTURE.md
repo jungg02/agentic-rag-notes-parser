@@ -232,7 +232,7 @@ by grepping for known-issue markers.
 
 See `backend/bench/baseline.py` and `backend/bench/results/baseline.json`
 (run from inside the backend container, where they live at `bench/baseline.py`
-/ `bench/results/baseline.json` relative to `/app`). Summary in the README.
+/ `bench/results/baseline.json` relative to `/app`). Summary in the README's Results table, full detail in `docs/BUILD_LOG.md`.
 Note: `corpus.chunks_total` in that JSON is a **global** count across every
 course in the DB; `corpus.benchmarked_course_chunks` is the actual working
 set the latency numbers below it were measured against, since
@@ -250,7 +250,7 @@ history builder in front of `build_system_prompt`. New tables `query_turns`
 and `retrieved_chunks` hang off `ChatMessage` alongside `MessageCitation`;
 `chat_sessions` gained `summary`/`summarized_through_message_id`. Design
 decisions and the latency cost of the new call are in `docs/adr/001-004-*.md`
-and the README's Phase 1 section — not re-diagrammed here to avoid this
+and `docs/BUILD_LOG.md`'s Phase 1 section — not re-diagrammed here to avoid this
 document drifting from Phase 0's own audited baseline.
 
 ## Phase 2: semantic memory
@@ -265,7 +265,7 @@ the request-response query flow at all: it's triggered opportunistically
 from `routers/chat.py`'s session-create endpoint, capped at one attempt per
 call (ADR 008), so it doesn't belong on the diagram above either. Design
 decisions in `docs/adr/005-009-*.md`; acceptance-criteria results and the
-memory-retrieval latency number are in the README's Phase 2 section.
+memory-retrieval latency number are in `docs/BUILD_LOG.md`'s Phase 2 section.
 
 ## Phase 3: evaluation harness
 
@@ -276,7 +276,7 @@ Reads the same modules the diagrams above describe (`retrieval/service.py`'s
 individual stages, `query/understanding.py`, `memory/retrieval.py`,
 `generation/prompts.py`) directly, rather than adding new production code
 paths. Design rationale in `docs/adr/010-phase3-eval-design.md`; results and
-methodology in `backend/bench/results/ablation.md` and the README's Phase 3
+methodology in `backend/bench/results/ablation.md` and `docs/BUILD_LOG.md`'s Phase 3
 section.
 
 ## Phase 4: multimodal retrieval
@@ -296,4 +296,4 @@ attach to the response as a separate `related_figures` list the frontend
 renders alongside, not inside, the assistant's message. Design decisions
 in `docs/adr/011-014-*.md`; acceptance-criteria results, the honest
 recall number, and what's explicitly not demonstrated (video, trained
-representations) are in the README's Phase 4 section.
+representations) are in `docs/BUILD_LOG.md`'s Phase 4 section.
