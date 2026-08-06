@@ -24,7 +24,7 @@ export default function App() {
             <span className="app-brand-mark" aria-hidden="true">
               §
             </span>
-            <h1 className="app-brand-name">Study Notes Parser</h1>
+            <h1 className="app-brand-name">Multi-Turn Hybrid Retrieval System with Agentic Memory</h1>
           </div>
           <CourseSelector selectedCourseId={selectedCourseId} onSelect={setSelectedCourseId} />
         </aside>

@@ -63,7 +63,7 @@ afterEach(() => {
 describe("App", () => {
   it("renders the app title", () => {
     render(<App />);
-    expect(screen.getByText("Study Notes Parser")).toBeInTheDocument();
+    expect(screen.getByText("Multi-Turn Hybrid Retrieval System with Agentic Memory")).toBeInTheDocument();
   });
 });
 
