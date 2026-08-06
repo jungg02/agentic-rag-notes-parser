@@ -25,6 +25,15 @@ Lexical only / dense only / RRF fused / fused + cross-encoder rerank, over all 6
 | topic_switch | 10 | 90.0% | 0.800 | 0.856 |
 | cross_session_memory | 8 | 87.5% | 0.719 | 0.758 |
 
+**Update (post-Phase-4):** the table above reflects `FUSED_CANDIDATES=20`
+as measured during Phase 3. `FUSED_CANDIDATES` was later halved to 10 to
+cut reranker latency (~700ms → ~280ms per item) after confirming, with
+this same script, that recall@6 is unchanged in every category at the
+lower candidate count — see the README's Phase 4 "post-phase
+optimization" note. Left as originally measured here rather than edited
+in place, since this table is what Phase 3 actually validated at the
+time.
+
 ## 2. Query-rewriting ablation -- the headline number
 
 **multi_turn_coreference** (n=12):

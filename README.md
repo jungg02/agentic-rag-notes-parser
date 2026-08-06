@@ -654,6 +654,25 @@ returned by `GET /api/sessions/{id}/messages` alongside citations.
 Full backend test suite: 185 passed, 1 pre-existing unrelated failure
 (see Phase 0 section), 1 skipped.
 
+**Post-phase optimization: reranker candidate count.** The Phase 0
+baseline above flagged reranking as ~92% of end-to-end latency, scoring
+up to 20 real-length chunks per query through a CPU cross-encoder.
+Halved `FUSED_CANDIDATES` (`app/retrieval/service.py`) from 20 to 10 and
+re-ran `bench/phase3_retrieval_ablation.py`: **recall@6 held exactly —
+82.26%, unchanged in every one of the 5 categories** — while per-item
+retrieval latency (lexical + vector + fusion + rerank combined) dropped
+from ~700ms to ~280ms, reproduced across three runs. mrr@6/nDCG@10 moved
+by noise-level amounts (±0.02) with no consistent direction. The dropped
+candidates (fused-list ranks 11-20) essentially never contained the
+correct answer that survived to the top-6 anyway on this eval set. Also
+fixed a latent measurement bug found while doing this: the ablation
+script had `20` hardcoded as a separate literal instead of importing
+`FUSED_CANDIDATES`, so a future change to the production constant could
+silently stop matching what the harness benchmarks.
+
+The Phase 0 per-stage latency table above is left as originally measured
+(a historical baseline, not re-run) rather than edited in place.
+
 ## Roadmap
 
 - **Phase 1 (this build):** course CRUD, ingestion, hybrid retrieval + RRF +

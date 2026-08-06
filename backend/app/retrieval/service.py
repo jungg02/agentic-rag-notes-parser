@@ -8,7 +8,7 @@ from app.retrieval.lexical import search_lexical
 from app.retrieval.rerank import ScoredChunk, rerank
 from app.retrieval.vector import search_vector
 
-FUSED_CANDIDATES = 20
+FUSED_CANDIDATES = 10
 FINAL_TOP_K = 6
 
 

@@ -42,6 +42,7 @@ from app.models import Chunk
 from app.retrieval.fusion import reciprocal_rank_fusion
 from app.retrieval.lexical import search_lexical
 from app.retrieval.rerank import rerank
+from app.retrieval.service import FUSED_CANDIDATES
 from app.retrieval.vector import search_vector
 from bench.phase3_dataset import DEFAULT_EVAL_FILE, EvalItem, load_items
 from bench.phase3_metrics import PageKey, first_hit_rank, mean, mrr_at_k, ndcg_at_k, recall_at_k
@@ -75,7 +76,7 @@ def evaluate_item(db: Session, course_id: int, item: EvalItem) -> dict[str, list
     vector_ids = search_vector(db, course_id, query_embedding, limit=50)
     fused_ids = reciprocal_rank_fusion([lexical_ids, vector_ids])
 
-    fused_candidate_ids = fused_ids[:20]  # matches FUSED_CANDIDATES in retrieval/service.py
+    fused_candidate_ids = fused_ids[:FUSED_CANDIDATES]
     needed_ids = list(set(lexical_ids[:TOP_K_NDCG]) | set(vector_ids[:TOP_K_NDCG]) | set(fused_candidate_ids))
     chunks_by_id = _fetch_chunks(db, needed_ids)
 
