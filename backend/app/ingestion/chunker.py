@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from transformers import AutoTokenizer
 
@@ -39,7 +39,7 @@ def _detect_header(lines: list[ExtractedLine]) -> str | None:
 
 
 def _merge_rects(lines: list[ExtractedLine]) -> list[dict]:
-    return [{"x0": l.bbox[0], "y0": l.bbox[1], "x1": l.bbox[2], "y1": l.bbox[3]} for l in lines]
+    return [{"x0": line.bbox[0], "y0": line.bbox[1], "x1": line.bbox[2], "y1": line.bbox[3]} for line in lines]
 
 
 def _make_chunk(lines: list[ExtractedLine], page: PageLines, header: str | None) -> ChunkDraft:
@@ -91,8 +91,7 @@ def chunk_pages(pages: list[PageLines], target_tokens: int = 350, overlap_tokens
             chunks.append(_make_chunk(current, page, header))
         elif header and not body_lines:
             # header-only page (e.g. a title slide) still gets one small chunk
-            chunks.append(_make_chunk([], page, header) if False else _make_chunk(
-                [ExtractedLine(text=header, bbox=(0, 0, page.width, 20), font_size=18, bold=True)], page, None
-            ))
+            title_line = ExtractedLine(text=header, bbox=(0, 0, page.width, 20), font_size=18, bold=True)
+            chunks.append(_make_chunk([title_line], page, None))
 
     return chunks

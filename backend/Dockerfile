@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice --no-install-recommends \
+    libreoffice \
     tesseract-ocr \
     fonts-liberation \
     build-essential \

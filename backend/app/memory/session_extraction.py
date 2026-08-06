@@ -67,7 +67,7 @@ def _extract_one_session(db: Session, session: ChatSession, to_process: list[Cha
     durable = [c for c in candidates if c.confidence >= MEMORY_CONFIDENCE_THRESHOLD]
     if durable:
         vectors = embed_texts([c.content for c in durable])
-        for candidate, vector in zip(durable, vectors):
+        for candidate, vector in zip(durable, vectors, strict=True):
             db.add(
                 Memory(
                     course_id=session.course_id,

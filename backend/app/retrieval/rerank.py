@@ -27,6 +27,6 @@ def rerank(query: str, candidates: list[Chunk], top_k: int) -> list[ScoredChunk]
     pairs = [(query, f"{c.context_header}\n{c.text}" if c.context_header else c.text) for c in candidates]
     raw_scores = _model().predict(pairs)
 
-    scored = [ScoredChunk(chunk=c, score=float(s)) for c, s in zip(candidates, raw_scores)]
+    scored = [ScoredChunk(chunk=c, score=float(s)) for c, s in zip(candidates, raw_scores, strict=True)]
     scored.sort(key=lambda sc: -sc.score)
     return scored[:top_k]

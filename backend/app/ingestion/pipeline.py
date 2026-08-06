@@ -96,7 +96,7 @@ def _extract_and_persist_figures(db: Session, document_id: int, doc_dir: Path, p
     shutil.rmtree(staging_root, ignore_errors=True)
 
     doc = db.get(Document, document_id)
-    for index, (draft, vector) in enumerate(zip(drafts, vectors)):
+    for index, (draft, vector) in enumerate(zip(drafts, vectors, strict=True)):
         image_path = final_dir / f"p{draft.page_number}_{index}.{draft.image_ext}"
         db.add(
             Figure(
@@ -156,7 +156,7 @@ def run_ingestion(document_id: int, db_session_factory: Callable[[], Session]) -
             # leaves the existing chunks intact.
             db.execute(delete(Chunk).where(Chunk.document_id == document_id))
 
-            for index, (draft, vector) in enumerate(zip(drafts, vectors)):
+            for index, (draft, vector) in enumerate(zip(drafts, vectors, strict=True)):
                 db.add(
                     Chunk(
                         document_id=document_id,
