@@ -50,7 +50,7 @@ from app.models import Chunk, Document
 from app.retrieval.fusion import reciprocal_rank_fusion
 from app.retrieval.lexical import search_lexical
 from app.retrieval.rerank import rerank
-from app.retrieval.service import retrieve
+from app.retrieval.service import FUSED_CANDIDATES, retrieve
 from app.retrieval.vector import search_vector
 
 STAGES = ["lexical", "embed", "vector", "fusion", "hydrate", "rerank"]
@@ -142,7 +142,7 @@ def run_benchmark(db: Session, course_id: int, queries: list[str]) -> dict:
         vector_ids = search_vector(db, course_id, query_embedding, limit=50)
         t3 = time.perf_counter()
 
-        fused_ids = reciprocal_rank_fusion([lexical_ids, vector_ids])[:20]
+        fused_ids = reciprocal_rank_fusion([lexical_ids, vector_ids])[:FUSED_CANDIDATES]
         t4 = time.perf_counter()
 
         chunks = db.scalars(select(Chunk).where(Chunk.id.in_(fused_ids))).all()
